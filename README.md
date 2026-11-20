@@ -1,4 +1,9 @@
 # Bypass-Blocking-Tool
+
+```bash
+su -c 'curl -sL https://githubusercontent.com -o /data/local/tmp/unblock.sh && chmod 755 /data/local/tmp/unblock.sh'
+```
+
 # Root Network Unblocker (v2.0)
 
 A standalone root script for Android to bypass network restrictions, DPI blocks, and HTTP proxy blocks across Wi-Fi and Mobile Data using an automated Cloudflare WARP TUN engine (`sing-box`).
