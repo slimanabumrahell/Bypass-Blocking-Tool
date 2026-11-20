@@ -63,7 +63,8 @@ install_core() {
         -H "Content-Type: application/json" \
         -d "{\"key\":\"${PUB_KEY}\",\"install_id\":\"\",\"fcm_token\":\"\",\"tos\":\"$(date -u +%Y-%m-%dT%H:%M:%S.000Z)\",\"model\":\"Android\",\"serial_number\":\"\",\"locale\":\"en_US\"}")
 
-    CLIENT_IPV4=$(echo "$REG_RES" | grep -o '"v4":"[^"]*' | cut -d'"' -f4)
+    # Extract clean 172.x.x.x client IPv4 address only
+    CLIENT_IPV4=$(echo "$REG_RES" | grep -o '"v4":"172\.[^"]*' | cut -d'"' -f4)
     PEER_PUB=$(echo "$REG_RES" | grep -o '"public_key":"[^"]*' | head -n1 | cut -d'"' -f4)
 
     if [ -z "$CLIENT_IPV4" ]; then
@@ -218,16 +219,30 @@ stop_bypass() {
     echo -e "${RED}[✖] Stopped. Network restored to default.${NC}"
 }
 
+check_status() {
+    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        echo -e "${GREEN}[✔] Status: RUNNING (PID: $(cat "$PID_FILE"))${NC}"
+        IP_INFO=$(curl -s --connect-timeout 5 https://ipify.org)
+        if [ -n "$IP_INFO" ]; then
+            echo -e "${CYAN}[i] Current Public IP: $IP_INFO${NC}"
+        fi
+    else
+        echo -e "${RED}[✖] Status: STOPPED${NC}"
+    fi
+}
+
 case "$1" in
     install) install_core ;;
     start)   start_bypass ;;
     stop)    stop_bypass ;;
+    status)  check_status ;;
     *)
         echo -e "${CYAN}Root Network Unblocker v2.0${NC}"
         echo -e "Usage:"
         echo -e "  1. Install core (Once): ${YELLOW}su -c 'sh /data/local/tmp/unblock.sh install'${NC}"
         echo -e "  2. Start Unblocker:     ${GREEN}su -c 'sh /data/local/tmp/unblock.sh start'${NC}"
         echo -e "  3. Start + HTTP Proxy:  ${CYAN}su -c 'PROXY_IP=1.2.3.4 PROXY_PORT=8080 sh /data/local/tmp/unblock.sh start'${NC}"
-        echo -e "  4. Stop Unblocker:      ${RED}su -c 'sh /data/local/tmp/unblock.sh stop'${NC}"
+        echo -e "  4. Check Status:        ${YELLOW}su -c 'sh /data/local/tmp/unblock.sh status'${NC}"
+        echo -e "  5. Stop Unblocker:      ${RED}su -c 'sh /data/local/tmp/unblock.sh stop'${NC}"
         ;;
 esac
