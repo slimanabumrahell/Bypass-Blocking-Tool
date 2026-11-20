@@ -43,7 +43,7 @@ su -c 'sh /data/local/tmp/unblock.sh warp on'
 su -c 'sh /data/local/tmp/unblock.sh warp off'
 ```
 
-### 2. WARP + Proxy Together (Start / Stop)
+### 3. WARP + Proxy Together (Start / Stop)
 
 Traffic path: `device -> WARP -> proxy -> internet`. Useful both for double-hopping and when your ISP blocks direct access to the proxy.
 
