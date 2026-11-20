@@ -4,14 +4,14 @@ An all-in-one Android root utility to bypass ISP restrictions, DPI censorship, a
 
 ## Root Network Unblocker (v2.6)
 
-Root utility for Android (run from Termux) that routes all device traffic through Cloudflare WARP and/or your own proxy, changing your IP and bypassing ISP / DPI blocks. No need to install the 1.1.1.1 app.
+Root utility for Android (run from Termux) that routes all device traffic through Cloudflare WARP and/or your own proxy (`device -> WARP -> proxy -> internet`), changing your IP and bypassing ISP / DPI blocks. No need to install the 1.1.1.1 app.
 
 - **100% Standalone:** Automatically downloads the core engine (`sing-box`) and registers a free WARP account (`install`).
-- **Composable & Independent Modes:** Run WARP alone, proxy alone, or layer them together (`device -> WARP -> proxy`), and turn either one off later while keeping the other running.
+- **WARP & Layered Proxy:** Run WARP alone, or layer your proxy on top of WARP (`device -> WARP -> proxy`).
 - **Speed & Stability Focused:** Uses saved working WARP endpoints first, supports `FAST_START=1` and `WARP_MTU`, and avoids unnecessary delays.
 - **No IPv6 Leaks:** IPv6 is rejected with `ip6tables` (in its own chain, removed again on stop).
 - **Proxy Support:** `socks5`, `socks4`, `http`, and `https`, with or without authentication.
-- **Fail-safe:** If a start or layer switch does not pass traffic, normal network settings are restored automatically (or a sensible fallback is used).
+- **Fail-safe:** If a start does not pass traffic, normal network settings are restored automatically (or a sensible fallback is used).
 - **Safe Restore:** Your previous Private DNS setting is restored on stop.
 - **Built-in diagnostics:** `doctor` prints everything needed to find a problem (no passwords).
 
@@ -37,7 +37,7 @@ pkg install -y curl && mkdir -p ~/unblocker && cd ~/unblocker && for f in unbloc
 su -c 'sh /data/local/tmp/unblock.sh warp on'
 ```
 
-- **Stop WARP** *(if a proxy is layered on top, the proxy stays running)*:
+- **Stop WARP:**
 
 ```sh
 su -c 'sh /data/local/tmp/unblock.sh warp off'
@@ -45,9 +45,9 @@ su -c 'sh /data/local/tmp/unblock.sh warp off'
 
 ### 3. WARP + Proxy Together (Start / Stop)
 
-Traffic path: `device -> WARP -> proxy -> internet`. Useful both for double-hopping and when your ISP blocks direct access to the proxy.
+Traffic path: `device -> WARP -> proxy -> internet`. Required when your proxy runs over WARP or when your ISP blocks direct access to the proxy.
 
-- **Start both (uses saved proxy):**
+- **Set & start both (interactive proxy setup, then starts WARP + proxy):**
 
 ```sh
 su -c 'sh /data/local/tmp/unblock.sh proxy set'
@@ -69,6 +69,7 @@ When a proxy is active in the chain, the exit IP belongs to the proxy, so `WARP:
 | `status` | Shows running state, mode, public IP, country, WARP status, active proxy, and DNS check |
 | `doctor` | Prints full diagnostics: device info, core/WARP status, saved proxy, `tun0`, and DNS servers |
 | `logs` | Shows the last 40 lines of the `sing-box` log |
+| `proxy set` | Interactive setup for proxy type, IP/host, port, and optional username/password |
 | `proxy status` | Shows saved and active proxy details |
 | `proxy clear` | Removes saved proxy settings (and switches to WARP-only if `both` was active) |
 | `renew` | Registers a fresh WARP account (and restarts WARP/`both` if active) |
@@ -81,7 +82,7 @@ Usage: `su -c 'sh /data/local/tmp/unblock.sh <command>'`
 
 ## Notes
 
-- **Independent layering:** Starting `proxy on` while `warp` is running moves to `both` (`device -> WARP -> proxy`). Running `warp off` in `both` mode stops WARP and keeps `proxy` running. Running `proxy off` in `both` mode stops the proxy and keeps `warp` running.
+- **WARP requirement for proxy:** On networks where direct proxy traffic is blocked or unsupported without a tunnel, use `all on` (`device -> WARP -> proxy`) rather than running the proxy alone.
 - **`socks4`** sends only a user ID (no password). Hostnames use `socks4a` automatically.
 - **`https` proxy** connects over TLS. Set `PROXY_SNI=name` if needed, or `PROXY_INSECURE=1` to skip certificate verification (not recommended).
 - **Private DNS** is turned **off** while running so DNS queries are handled cleanly through the tunnel, then restored on stop. Set `PRIVATE_DNS=keep` to leave Private DNS untouched.
@@ -89,15 +90,15 @@ Usage: `su -c 'sh /data/local/tmp/unblock.sh <command>'`
 
 ## What's new in v2.6
 
-- **True independent layering:** Layering `proxy` on top of `warp` and stopping either `warp` or `proxy` independently without dropping the other component.
+- **WARP + Proxy chaining:** Reliable `device -> WARP -> proxy -> internet` routing with automatic fallback to WARP-only if proxy traffic fails.
 - **Faster startup & MTU tuning:** Added `FAST_START=1` and `WARP_MTU` (default `1360`) for responsive connections.
-- **Cleaner DNS routing:** Ensured direct resolution for hostname proxies when needed and consistent DNS outbound routing across modes.
+- **Cleaner DNS routing:** Consistent DNS outbound routing across WARP and chained proxy modes.
 
 ## Troubleshooting
 
 Run `su -c 'sh /data/local/tmp/unblock.sh doctor'` first to inspect your setup.
 
-- **`proxy on` fails directly but `all on` works:** Your ISP likely blocks direct proxy traffic; use `all on` (`device -> WARP -> proxy`).
+- **Proxy fails alone, works with `all on`:** Your ISP blocks direct proxy traffic or requires the WARP tunnel first; always use `all on`.
 - **DNS resolution fails (`curl exit 6`):** Wait a few seconds and check `status`, or start with `BLOCK_IPV6=0` on networks where system DNS is IPv6-only.
 - **WARP fails to connect:** Your ISP may block UDP `2408`; try `WARP_PORT=500`, `1701`, or `4500`, or let the script probe endpoints.
 - **No traffic with `system` stack:** Try `TUN_STACK=gvisor`.
