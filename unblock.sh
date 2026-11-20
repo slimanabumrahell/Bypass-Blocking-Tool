@@ -461,13 +461,22 @@ EOF
 
 # ---------------------------------------------------------------- system state (IPv6 / Private DNS)
 
-# Android's settings service rejects uid 0 on many ROMs -> run as shell (2000)
-asettings() { su 2000 -c "settings $*" 2>/dev/null || settings "$@" 2>/dev/null; }
+# Try direct settings first (uid 0 already has access on most ROMs), fallback to shell (2000),
+# and suppress Binder/cmd transaction errors so tunnel startup is never blocked.
+asettings() {
+  if settings "$@" >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ "$(id -u)" -eq 0 ] && command -v su >/dev/null 2>&1; then
+    su 2000 -c "settings $*" >/dev/null 2>&1 && return 0
+  fi
+  return 0
+}
 
 save_state() {
   [ -f "$STATE_FILE" ] && return 0   # keep the ORIGINAL state across restarts
-  PD_MODE=$(asettings get global private_dns_mode 2>/dev/null)
-  PD_SPEC=$(asettings get global private_dns_specifier 2>/dev/null)
+  PD_MODE=$(asettings get global private_dns_mode)
+  PD_SPEC=$(asettings get global private_dns_specifier)
   V6_IN=$(ip6tables -S INPUT 2>/dev/null | sed -n 's/^-P INPUT //p')
   V6_OUT=$(ip6tables -S OUTPUT 2>/dev/null | sed -n 's/^-P OUTPUT //p')
   ( umask 077
@@ -488,13 +497,13 @@ block_ipv6() {
 }
 
 set_private_dns() {
-  asettings put global private_dns_mode hostname 2>/dev/null
-  asettings put global private_dns_specifier one.one.one.one 2>/dev/null
+  asettings put global private_dns_mode hostname
+  asettings put global private_dns_specifier one.one.one.one
 }
 
 # proxy-only mode: DNS-over-TLS may not pass through the proxy, so use plain DNS (hijacked by the tunnel)
 set_private_dns_off() {
-  asettings put global private_dns_mode off 2>/dev/null
+  asettings put global private_dns_mode off
 }
 
 restore_system() {
@@ -507,14 +516,14 @@ restore_system() {
   ip6tables -D OUTPUT -o lo -j ACCEPT 2>/dev/null
 
   if [ -z "$PD_MODE" ] || [ "$PD_MODE" = "null" ]; then
-    asettings delete global private_dns_mode 2>/dev/null
+    asettings delete global private_dns_mode
   else
-    asettings put global private_dns_mode "$PD_MODE" 2>/dev/null
+    asettings put global private_dns_mode "$PD_MODE"
   fi
   if [ -z "$PD_SPEC" ] || [ "$PD_SPEC" = "null" ]; then
-    asettings delete global private_dns_specifier 2>/dev/null
+    asettings delete global private_dns_specifier
   else
-    asettings put global private_dns_specifier "$PD_SPEC" 2>/dev/null
+    asettings put global private_dns_specifier "$PD_SPEC"
   fi
   rm -f "$STATE_FILE"
 }
