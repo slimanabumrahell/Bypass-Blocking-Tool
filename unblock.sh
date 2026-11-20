@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# Root Network Unblocker v3.0 - Multi-Engine Anti-DPI Suite (sing-box + Xray-core + ByeDPI + wireproxy)
+# Root Network Unblocker v3.1 - Multi-Engine Anti-DPI Suite (sing-box + Xray-core + ByeDPI + wireproxy)
 # Path: /data/local/tmp/unblock.sh
 #
 # Modes & Layers:
@@ -8,12 +8,12 @@
 #   dpi   -> device -> ByeDPI (Anti-DPI fragmentation) -> internet
 #   both  -> device -> WARP -> proxy / Xray / ByeDPI -> internet
 
-VERSION="3.0"
+VERSION="3.1"
 
 export PATH="$PATH:/system/bin:/system/xbin:/data/data/com.termux/files/usr/bin"
 
 SELF="/data/local/tmp/unblock.sh"
-WORK_DIR="/data/local/tmp/unblocker"
+WORK_DIR="${WORK_DIR:-/data/local/tmp/unblocker}"
 SINGBOX_BIN="$WORK_DIR/sing-box"
 XRAY_BIN="$WORK_DIR/xray"
 BYEDPI_BIN="$WORK_DIR/ciadpi"
@@ -37,10 +37,10 @@ STATE_FILE="$WORK_DIR/state.env"
 ACTIVE_PROXY_FILE="$WORK_DIR/active.proxy"
 MODE_FILE="$WORK_DIR/active.mode"
 WARP_OK_FILE="$WORK_DIR/warp.ok"
-CRED_FILE="/data/adb/warp.conf"
+CRED_FILE="${CRED_FILE:-/data/adb/warp.conf}"
 OLD_CRED_FILE="$WORK_DIR/warp_creds.env"
-USER_CONF="/data/adb/unblock.conf"
-BOOT_HOOK="/data/adb/service.d/99-unblock.sh"
+USER_CONF="${USER_CONF:-/data/adb/unblock.conf}"
+BOOT_HOOK="${BOOT_HOOK:-/data/adb/service.d/99-unblock.sh}"
 V6_CHAIN="UNBLOCK_V6"
 
 XRAY_LOCAL_PORT="10808"
@@ -53,7 +53,14 @@ say()  { printf '%b\n' "$*"; }
 info() { say "${CYAN}[*] $*${NC}"; }
 warn() { say "${YELLOW}[!] $*${NC}"; }
 ok()   { say "${GREEN}[+] $*${NC}"; }
-die()  { say "${RED}[x] $*${NC}"; exit 1; }
+die() {
+  say "${RED}[x] $*${NC}"
+  if [ -n "$ROLLBACK_ON_DIE" ]; then
+    ROLLBACK_ON_DIE=""
+    emergency_cleanup
+  fi
+  exit 1
+}
 
 pid_alive() {
   [ -f "$1" ] || return 1
@@ -68,7 +75,115 @@ need_curl() { command -v curl >/dev/null 2>&1 || die "curl not found. In Termux 
 need_unzip() { command -v unzip >/dev/null 2>&1 || die "unzip not found. In Termux run: pkg install unzip"; }
 json_esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
-CONF_VARS="PROXY_TYPE PROXY_URI PROXY_IP PROXY_PORT PROXY_USER PROXY_PASS PROXY_SNI PROXY_INSECURE WARP_ENDPOINT WARP_PORT WARP_MTU WARP_ENGINE DPI_ARGS TUN_STACK SB_VER XRAY_VER BYEDPI_VER WP_VER BLOCK_IPV6 HIDE_PASS PRIVATE_DNS KEEP_ON_FAIL DNS_TRIES FAST_START TLS_FRAG"
+# base64 decode that tolerates url-safe alphabet, missing padding and CR/LF
+b64d() {
+  _b=$(printf '%s' "$1" | tr '_-' '/+' | tr -d '\r\n ')
+  case $(( ${#_b} % 4 )) in
+    2) _b="$_b==" ;;
+    3) _b="$_b=" ;;
+  esac
+  printf '%s' "$_b" | base64 -d 2>/dev/null
+}
+
+# minimal percent-decoding for the characters that show up in share links
+urldec() { printf '%s' "$1" | sed 's/%2[Ff]/\//g; s/%3[Dd]/=/g; s/%2[Bb]/+/g; s/%3[Aa]/:/g; s/%40/@/g; s/%20/ /g'; }
+
+# qparam KEY QUERY -> value of KEY in a "a=1&b=2" query string
+qparam() { printf '%s' "$2" | tr '&' '\n' | sed -n "s/^$1=//p" | head -n1; }
+
+# resolve_ipv4 HOST -> IPv4 (literal, DoH via 1.1.1.1 by IP, then ping)
+resolve_ipv4() {
+  if is_ip "$1"; then printf '%s' "$1"; return 0; fi
+  _ip=$(curl -s --connect-timeout 5 --max-time 8 -H 'accept: application/dns-json' \
+        "https://1.1.1.1/dns-query?name=$1&type=A" 2>/dev/null \
+        | grep -o '"data":"[0-9][0-9.]*"' | head -n1 | cut -d'"' -f4)
+  if [ -z "$_ip" ]; then
+    _ip=$(ping -c 1 -W 3 "$1" 2>/dev/null | sed -n 's/^PING [^(]*(\([0-9.]*\)).*/\1/p' | head -n1)
+  fi
+  printf '%s' "$_ip"
+}
+
+# ss_split PAYLOAD -> sets _ss_cred (method:password) and _ss_hp (host:port)
+# handles SIP002 (base64url(method:pass)@host:port) and legacy base64(all)
+ss_split() {
+  _ssr="${1%%#*}"
+  case "$_ssr" in
+    *@*)
+      _ss_cred="${_ssr%@*}"
+      _ss_hp="${_ssr##*@}"
+      _ss_hp="${_ss_hp%%[/?]*}"
+      case "$(urldec "$_ss_cred")" in
+        *:*) _ss_cred=$(urldec "$_ss_cred") ;;
+        *)   _ss_cred=$(b64d "$_ss_cred") ;;
+      esac
+      ;;
+    *)
+      _d=$(b64d "${_ssr%%\?*}")
+      _ss_cred="${_d%@*}"
+      _ss_hp="${_d##*@}"
+      ;;
+  esac
+}
+
+# xray_server_host -> host/IP of the Xray server inside $PROXY_URI
+xray_server_host() {
+  _xu="$PROXY_URI"
+  _xp="${_xu%%://*}"
+  _xr="${_xu#*://}"
+  _xr="${_xr%%#*}"
+  case "$_xp" in
+    vmess) b64d "$_xr" | tr -d ' \n\r\t' | grep -o '"add":"[^"]*"' | head -n1 | cut -d'"' -f4 ;;
+    ss)    ss_split "$_xr"; printf '%s' "${_ss_hp%:*}" ;;
+    *)     _xh="${_xr#*@}"; _xh="${_xh%%[/?]*}"; printf '%s' "${_xh%:*}" | tr -d '[]' ;;
+  esac
+}
+
+# Local engines (Xray / wireproxy) run on the device, so their own outgoing
+# packets would be captured by tun0 and loop back into sing-box.
+# Route those packets explicitly. Sets BYPASS_RULES (leading comma included).
+engine_bypass_rules() {
+  BYPASS_RULES=""
+
+  if [ "$MODE" != "proxy" ] && [ "$WARP_ENGINE" = "wireproxy" ] && is_ip "$WARP_ENDPOINT"; then
+    BYPASS_RULES="$BYPASS_RULES,
+      { \"ip_cidr\": [\"$WARP_ENDPOINT/32\"], \"outbound\": \"direct\" }"
+  fi
+
+  if [ "$PROXY_TYPE" = "xray" ] && [ "$MODE" != "warp" ] && [ -n "$PROXY_URI" ]; then
+    # both + wireproxy: Xray dials through wireproxy's SOCKS port, nothing reaches tun0
+    if [ "$MODE" = "both" ] && [ "$WARP_ENGINE" = "wireproxy" ]; then
+      return 0
+    fi
+    _xo="direct"
+    [ "$MODE" = "both" ] && _xo="warp-out"
+    _xh=$(xray_server_host)
+    if [ -n "$_xh" ]; then
+      _xip=$(resolve_ipv4 "$_xh")
+      if [ -n "$_xip" ]; then
+        BYPASS_RULES="$BYPASS_RULES,
+      { \"ip_cidr\": [\"$_xip/32\"], \"outbound\": \"$_xo\" }"
+      fi
+      if ! is_ip "$_xh"; then
+        BYPASS_RULES="$BYPASS_RULES,
+      { \"domain\": [\"$(json_esc "$_xh")\"], \"outbound\": \"$_xo\" }"
+        [ -n "$_xip" ] || warn "Could not resolve Xray server '$_xh' - its traffic may loop through the tunnel."
+      fi
+    else
+      warn "Could not read the Xray server from the link - loop protection skipped."
+    fi
+  fi
+}
+
+# Used by die() while a start is in progress: leave the phone's network clean
+emergency_cleanup() {
+  stop_xray; stop_byedpi; stop_wireproxy
+  kill_core
+  cleanup_leftovers
+  restore_system
+  rm -f "$ACTIVE_PROXY_FILE" "$MODE_FILE"
+}
+
+CONF_VARS="PROXY_TYPE PROXY_URI PROXY_IP PROXY_PORT PROXY_USER PROXY_PASS PROXY_SNI PROXY_INSECURE WARP_ENDPOINT WARP_PORT WARP_MTU WARP_ENGINE DPI_ARGS TUN_STACK SB_VER XRAY_VER BYEDPI_VER WP_VER BLOCK_IPV6 HIDE_PASS PRIVATE_DNS KEEP_ON_FAIL DNS_TRIES FAST_START TLS_FRAG DNS_HIJACK"
 
 load_user_conf() {
   [ -f "$USER_CONF" ] || return 0
@@ -245,13 +360,13 @@ ensure_proxy() {
 detect_arch() {
   case "$(uname -m)" in
     aarch64|arm64)
-      SB_ARCH="arm64"; XRAY_ARCH="arm64-v8a"; DPI_ARCH="arm64"; WP_ARCH="arm64" ;;
+      SB_ARCH="arm64"; XRAY_ARCH="arm64-v8a"; DPI_ARCH="aarch64"; WP_ARCH="arm64" ;;
     armv7*|armv8l|arm)
-      SB_ARCH="armv7"; XRAY_ARCH="arm32-v7a"; DPI_ARCH="arm"; WP_ARCH="arm" ;;
+      SB_ARCH="armv7"; XRAY_ARCH="arm32-v7a"; DPI_ARCH="armv7l"; WP_ARCH="arm" ;;
     x86_64)
       SB_ARCH="amd64"; XRAY_ARCH="64"; DPI_ARCH="x86_64"; WP_ARCH="amd64" ;;
     i686|i386)
-      SB_ARCH="386"; XRAY_ARCH="32"; DPI_ARCH="x86"; WP_ARCH="386" ;;
+      SB_ARCH="386"; XRAY_ARCH="32"; DPI_ARCH="i686"; WP_ARCH="386" ;;
     *) die "Unsupported architecture: $(uname -m)" ;;
   esac
 }
@@ -261,9 +376,14 @@ download_singbox() {
   detect_arch
   mkdir -p "$WORK_DIR" && chmod 700 "$WORK_DIR"
   URL="${SB_URL:-https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-android-${SB_ARCH}.tar.gz}"
+  case "$SB_VER" in
+    1.8.*|1.9.*|1.10.*) ;;
+    *) warn "The generated config targets sing-box 1.10.x; v${SB_VER} may reject deprecated fields (inet4_address, wireguard/dns outbounds)." ;;
+  esac
   info "Downloading sing-box v${SB_VER} (${SB_ARCH})..."
   curl -fL --retry 3 --connect-timeout 15 -o "$WORK_DIR/sb.tar.gz" "$URL" \
     || die "sing-box download failed."
+  rm -rf "$WORK_DIR"/sing-box-*
   tar -xzf "$WORK_DIR/sb.tar.gz" -C "$WORK_DIR" || die "sing-box extraction failed."
   mv "$WORK_DIR"/sing-box-*/sing-box "$SINGBOX_BIN" 2>/dev/null || die "sing-box binary missing."
   rm -rf "$WORK_DIR"/sing-box-* "$WORK_DIR/sb.tar.gz"
@@ -299,16 +419,18 @@ download_byedpi() {
   need_curl
   detect_arch
   mkdir -p "$WORK_DIR"
-  DURL="${BYEDPI_URL:-https://github.com/hufrea/byedpi/releases/download/v${BYEDPI_VER}/byedpi-${BYEDPI_VER}-${DPI_ARCH}.tar.gz}"
+  # release tag is v0.17.3 but the asset is byedpi-17.3-<arch>.tar.gz
+  DURL="${BYEDPI_URL:-https://github.com/hufrea/byedpi/releases/download/v${BYEDPI_VER}/byedpi-${BYEDPI_VER#0.}-${DPI_ARCH}.tar.gz}"
   info "Downloading ByeDPI (ciadpi) v${BYEDPI_VER} (${DPI_ARCH})..."
   if curl -fL --retry 3 --connect-timeout 15 -o "$WORK_DIR/dpi.tar.gz" "$DURL"; then
     mkdir -p "$WORK_DIR/dpi_tmp"
     tar -xzf "$WORK_DIR/dpi.tar.gz" -C "$WORK_DIR/dpi_tmp" 2>/dev/null
-    _found=$(find "$WORK_DIR/dpi_tmp" -type f -name "ciadpi" 2>/dev/null | head -n1)
+    _found=$(find "$WORK_DIR/dpi_tmp" -type f \( -name "ciadpi" -o -name "byedpi" \) 2>/dev/null | head -n1)
     if [ -n "$_found" ]; then
       mv "$_found" "$BYEDPI_BIN"
       chmod 755 "$BYEDPI_BIN"
-      ok "Engine [ByeDPI / ciadpi] ready."
+      "$BYEDPI_BIN" --help >/dev/null 2>&1; _rc=$?
+      if [ "$_rc" -ge 126 ]; then warn "ciadpi cannot run on this device (exit $_rc) - wrong build/arch?"; else ok "Engine [ByeDPI / ciadpi] ready."; fi
     else
       warn "ciadpi binary not found in archive."
     fi
@@ -422,8 +544,17 @@ build_xray_config() {
   _rest="${_uri#*://}"
   _rest="${_rest%%#*}"
 
+  # Dial chain: proxy -> [fragment] -> [wp-warp (wireproxy)] -> internet
+  _wp_chain=0
+  [ "$MODE" = "both" ] && [ "$WARP_ENGINE" = "wireproxy" ] && _wp_chain=1
+  _frag_on=0
+  [ "${TLS_FRAG:-1}" = "1" ] && _frag_on=1
+
   _frag_block=""
-  if [ "${TLS_FRAG:-1}" = "1" ]; then
+  if [ "$_frag_on" = "1" ]; then
+    _frag_sock=""
+    [ "$_wp_chain" = "1" ] && _frag_sock=',
+      "streamSettings": { "sockopt": { "dialerProxy": "wp-warp" } }'
     _frag_block=',
     {
       "tag": "fragment",
@@ -434,17 +565,21 @@ build_xray_config() {
           "length": "10-20",
           "interval": "10-20"
         }
-      }
+      }'"$_frag_sock"'
     }'
   fi
 
+  # TLS based outbounds go through "fragment"; plain ones (ss) only use the wireproxy chain
   _dialer_opt=""
-  if [ "$MODE" = "both" ] && [ "$WARP_ENGINE" = "wireproxy" ]; then
-    _dialer_opt='"sockopt": { "dialerProxy": "wp-warp" },'
+  _dialer_plain=""
+  if [ "$_wp_chain" = "1" ]; then
+    _dialer_plain='"sockopt": { "dialerProxy": "wp-warp" },'
+    _dialer_opt="$_dialer_plain"
   fi
+  [ "$_frag_on" = "1" ] && _dialer_opt='"sockopt": { "dialerProxy": "fragment" },'
 
   _wp_out=""
-  if [ "$MODE" = "both" ] && [ "$WARP_ENGINE" = "wireproxy" ]; then
+  if [ "$_wp_chain" = "1" ]; then
     _wp_out=", {
       \"tag\": \"wp-warp\",
       \"protocol\": \"socks\",
@@ -457,21 +592,31 @@ build_xray_config() {
       _uuid="${_rest%%@*}"
       _hostport_q="${_rest#*@}"
       _hostport="${_hostport_q%%\?*}"
+      _hostport="${_hostport%%/*}"
       _query=""
       case "$_hostport_q" in *\?*) _query="${_hostport_q#*\?}" ;; esac
-      _srv="${_hostport%:*}"
+      _srv=$(printf '%s' "${_hostport%:*}" | tr -d '[]')
       _prt="${_hostport##*:}"
-      _sni=$(printf '%s' "$_query" | tr '&' '\n' | sed -n 's/^sni=//p' | head -n1)
-      _sec=$(printf '%s' "$_query" | tr '&' '\n' | sed -n 's/^security=//p' | head -n1)
-      _net=$(printf '%s' "$_query" | tr '&' '\n' | sed -n 's/^type=//p' | head -n1)
-      _pbk=$(printf '%s' "$_query" | tr '&' '\n' | sed -n 's/^pbk=//p' | head -n1)
-      _sid=$(printf '%s' "$_query" | tr '&' '\n' | sed -n 's/^sid=//p' | head -n1)
-      _fp=$(printf '%s' "$_query" | tr '&' '\n' | sed -n 's/^fp=//p' | head -n1)
-      _flow=$(printf '%s' "$_query" | tr '&' '\n' | sed -n 's/^flow=//p' | head -n1)
-      _path=$(printf '%s' "$_query" | tr '&' '\n' | sed -n 's/^path=//p' | head -n1 | sed 's/%2F/\//g')
+      _sni=$(qparam sni "$_query")
+      _sec=$(qparam security "$_query")
+      _net=$(qparam type "$_query")
+      _pbk=$(qparam pbk "$_query")
+      _sid=$(qparam sid "$_query")
+      _fp=$(qparam fp "$_query")
+      _flow=$(qparam flow "$_query")
+      _path=$(urldec "$(qparam path "$_query")")
+      _svc=$(urldec "$(qparam serviceName "$_query")")
+      _hosthdr=$(urldec "$(qparam host "$_query")")
       [ -z "$_net" ] && _net="tcp"
       [ -z "$_fp" ] && _fp="chrome"
       [ -z "$_sni" ] && _sni="$_srv"
+      [ -n "$_uuid" ] && [ -n "$_srv" ] || die "Invalid vless:// link (missing id or server)."
+      valid_port "$_prt" || die "Invalid port in vless:// link."
+      case "$_net" in tcp|ws|grpc) ;; *) die "Unsupported transport '$_net' (supported: tcp, ws, grpc)." ;; esac
+      _uuid=$(json_esc "$_uuid"); _srv=$(json_esc "$_srv"); _sni=$(json_esc "$_sni")
+      _pbk=$(json_esc "$_pbk"); _sid=$(json_esc "$_sid"); _fp=$(json_esc "$_fp")
+      _flow=$(json_esc "$_flow"); _path=$(json_esc "$_path"); _svc=$(json_esc "$_svc")
+      _hosthdr=$(json_esc "${_hosthdr:-$_sni}")
 
       _stream="\"network\": \"$_net\""
       if [ "$_sec" = "reality" ]; then
@@ -480,9 +625,9 @@ build_xray_config() {
         _stream="$_stream, \"security\": \"tls\", \"tlsSettings\": { \"serverName\": \"$_sni\", \"fingerprint\": \"$_fp\", \"allowInsecure\": false }"
       fi
       if [ "$_net" = "ws" ]; then
-        _stream="$_stream, \"wsSettings\": { \"path\": \"${_path:-/}\", \"headers\": { \"Host\": \"$_sni\" } }"
+        _stream="$_stream, \"wsSettings\": { \"path\": \"${_path:-/}\", \"headers\": { \"Host\": \"$_hosthdr\" } }"
       elif [ "$_net" = "grpc" ]; then
-        _stream="$_stream, \"grpcSettings\": { \"serviceName\": \"${_path}\" }"
+        _stream="$_stream, \"grpcSettings\": { \"serviceName\": \"${_svc:-$_path}\" }"
       fi
       _flow_json=""
       [ -n "$_flow" ] && _flow_json="\"flow\": \"$_flow\","
@@ -497,15 +642,19 @@ build_xray_config() {
       }"
       ;;
     trojan)
-      _pass="${_rest%%@*}"
+      _pass=$(urldec "${_rest%%@*}")
       _hostport_q="${_rest#*@}"
       _hostport="${_hostport_q%%\?*}"
+      _hostport="${_hostport%%/*}"
       _query=""
       case "$_hostport_q" in *\?*) _query="${_hostport_q#*\?}" ;; esac
-      _srv="${_hostport%:*}"
+      _srv=$(printf '%s' "${_hostport%:*}" | tr -d '[]')
       _prt="${_hostport##*:}"
-      _sni=$(printf '%s' "$_query" | tr '&' '\n' | sed -n 's/^sni=//p' | head -n1)
+      _sni=$(qparam sni "$_query")
       [ -z "$_sni" ] && _sni="$_srv"
+      [ -n "$_pass" ] && [ -n "$_srv" ] || die "Invalid trojan:// link (missing password or server)."
+      valid_port "$_prt" || die "Invalid port in trojan:// link."
+      _pass=$(json_esc "$_pass"); _srv=$(json_esc "$_srv"); _sni=$(json_esc "$_sni")
       _out_json="{
         \"tag\": \"proxy\",
         \"protocol\": \"trojan\",
@@ -514,23 +663,24 @@ build_xray_config() {
       }"
       ;;
     ss)
-      _cred_part="${_rest%%@*}"
-      _hostport="${_rest#*@}"
-      _srv="${_hostport%:*}"
-      _prt="${_hostport##*:}"
-      _dec=$(printf '%s' "$_cred_part" | base64 -d 2>/dev/null)
-      [ -z "$_dec" ] && _dec="$_cred_part"
-      _method="${_dec%%:*}"
-      _pass="${_dec#*:}"
+      ss_split "$_rest"
+      _method="${_ss_cred%%:*}"
+      _pass="${_ss_cred#*:}"
+      _srv=$(printf '%s' "${_ss_hp%:*}" | tr -d '[]')
+      _prt="${_ss_hp##*:}"
+      [ -n "$_method" ] && [ "$_method" != "$_ss_cred" ] && [ -n "$_srv" ] || die "Invalid ss:// link."
+      valid_port "$_prt" || die "Invalid port in ss:// link."
+      _method=$(json_esc "$_method"); _pass=$(json_esc "$_pass"); _srv=$(json_esc "$_srv")
       _out_json="{
         \"tag\": \"proxy\",
         \"protocol\": \"shadowsocks\",
         \"settings\": { \"servers\": [ { \"address\": \"$_srv\", \"port\": $_prt, \"method\": \"$_method\", \"password\": \"$_pass\" } ] },
-        \"streamSettings\": { $_dialer_opt \"network\": \"tcp\" }
+        \"streamSettings\": { $_dialer_plain \"network\": \"tcp\" }
       }"
       ;;
     vmess)
-      _dec=$(printf '%s' "$_rest" | base64 -d 2>/dev/null)
+      # share links are often pretty-printed JSON ("add": "x"), so drop whitespace before matching
+      _dec=$(b64d "$_rest" | tr -d ' \n\r\t')
       _srv=$(printf '%s' "$_dec" | grep -o '"add":"[^"]*"' | head -n1 | cut -d'"' -f4)
       _prt=$(printf '%s' "$_dec" | grep -o '"port":[0-9]*' | head -n1 | cut -d':' -f2)
       [ -z "$_prt" ] && _prt=$(printf '%s' "$_dec" | grep -o '"port":"[0-9]*"' | head -n1 | cut -d'"' -f4)
@@ -539,12 +689,19 @@ build_xray_config() {
       _tls=$(printf '%s' "$_dec" | grep -o '"tls":"[^"]*"' | head -n1 | cut -d'"' -f4)
       _sni=$(printf '%s' "$_dec" | grep -o '"sni":"[^"]*"' | head -n1 | cut -d'"' -f4)
       _path=$(printf '%s' "$_dec" | grep -o '"path":"[^"]*"' | head -n1 | cut -d'"' -f4)
+      _hosthdr=$(printf '%s' "$_dec" | grep -o '"host":"[^"]*"' | head -n1 | cut -d'"' -f4)
       [ -z "$_net" ] && _net="tcp"
-      [ -z "$_sni" ] && _sni="$_srv"
+      [ -z "$_sni" ] && _sni="${_hosthdr:-$_srv}"
+      [ -n "$_srv" ] && [ -n "$_uuid" ] || die "Invalid vmess:// link (could not read server / id)."
+      valid_port "$_prt" || die "Invalid port in vmess:// link."
+      case "$_net" in tcp|ws|grpc) ;; *) die "Unsupported transport '$_net' (supported: tcp, ws, grpc)." ;; esac
+      _srv=$(json_esc "$_srv"); _uuid=$(json_esc "$_uuid"); _sni=$(json_esc "$_sni")
+      _path=$(json_esc "$_path"); _hosthdr=$(json_esc "${_hosthdr:-$_sni}")
       _sec_json=""
       [ "$_tls" = "tls" ] && _sec_json=", \"security\": \"tls\", \"tlsSettings\": { \"serverName\": \"$_sni\", \"fingerprint\": \"chrome\" }"
       _ws_json=""
-      [ "$_net" = "ws" ] && _ws_json=", \"wsSettings\": { \"path\": \"${_path:-/}\" }"
+      [ "$_net" = "ws" ] && _ws_json=", \"wsSettings\": { \"path\": \"${_path:-/}\", \"headers\": { \"Host\": \"$_hosthdr\" } }"
+      [ "$_net" = "grpc" ] && _ws_json=", \"grpcSettings\": { \"serviceName\": \"$_path\" }"
       _out_json="{
         \"tag\": \"proxy\",
         \"protocol\": \"vmess\",
@@ -629,8 +786,9 @@ MTU = $_mtu
 
 [Peer]
 PublicKey = $PEER_PUB
+AllowedIPs = 0.0.0.0/0
 Endpoint = $WARP_ENDPOINT:$WARP_PORT
-KeepAlive = 25
+PersistentKeepalive = 25
 
 [Socks5]
 BindAddress = 127.0.0.1:$WP_LOCAL_PORT
@@ -712,8 +870,8 @@ EOF
 
 proxy_outbound() {
   if [ "$PROXY_TYPE" = "byedpi" ]; then
+    # loopback engine: no detour (127.0.0.1 through WARP would hit the far side)
     DETOUR_JSON=""
-    [ "$MODE" = "both" ] && DETOUR_JSON='"detour": "warp-out",'
     cat <<EOF
 {
   "type": "socks",
@@ -728,8 +886,8 @@ EOF
   fi
 
   if [ "$PROXY_TYPE" = "xray" ]; then
+    # loopback engine: WARP is applied to Xray's own egress (route rule / dialerProxy), not here
     DETOUR_JSON=""
-    [ "$MODE" = "both" ] && [ "$WARP_ENGINE" != "wireproxy" ] && DETOUR_JSON='"detour": "warp-out",'
     cat <<EOF
 {
   "type": "socks",
@@ -814,12 +972,16 @@ validate_proxy() {
 
 build_config() {
   DNS_RULES=""
+  # wireproxy's SOCKS5 has no UDP: DNS must go over TCP when it is the WARP engine
+  _wdns="1.1.1.1"
+  [ "$WARP_ENGINE" = "wireproxy" ] && _wdns="tcp://1.1.1.1"
+
   case "$MODE" in
     warp)
       load_creds
       OUTBOUNDS="$(wg_outbound)"
       FINAL_TAG="warp-out"
-      DNS_SERVER='{ "tag": "cf-dns", "address": "1.1.1.1", "detour": "warp-out" }'
+      DNS_SERVER="{ \"tag\": \"cf-dns\", \"address\": \"$_wdns\", \"detour\": \"warp-out\" }"
       DNS_OUTBOUND_TAG="warp-out"
       ;;
     both)
@@ -828,7 +990,7 @@ build_config() {
       OUTBOUNDS="$(proxy_outbound),
     $(wg_outbound)"
       FINAL_TAG="proxy-out"
-      DNS_SERVER='{ "tag": "cf-dns", "address": "1.1.1.1", "detour": "warp-out" }'
+      DNS_SERVER="{ \"tag\": \"cf-dns\", \"address\": \"$_wdns\", \"detour\": \"warp-out\" }"
       DNS_OUTBOUND_TAG="warp-out"
       ;;
     proxy)
@@ -845,6 +1007,22 @@ build_config() {
       ;;
     *) die "Internal error: unknown mode '$MODE'." ;;
   esac
+
+  # DNS: hijack every query into sing-box's own resolver (cf-dns) instead of
+  # forwarding raw packets to whatever resolver the phone/ISP handed out.
+  # DNS_HIJACK=0 restores the old behaviour.
+  if [ "${DNS_HIJACK:-1}" = "0" ]; then
+    EXTRA_OUT=""
+    DNS_ROUTE_RULES="{ \"protocol\": \"dns\", \"outbound\": \"$DNS_OUTBOUND_TAG\" },
+      { \"port\": 53, \"outbound\": \"$DNS_OUTBOUND_TAG\" }"
+  else
+    EXTRA_OUT=',
+    { "type": "dns", "tag": "dns-out" }'
+    DNS_ROUTE_RULES='{ "protocol": "dns", "outbound": "dns-out" },
+      { "port": 53, "outbound": "dns-out" }'
+  fi
+
+  engine_bypass_rules
 
   ( umask 077
     cat > "$CONFIG_FILE" <<EOF
@@ -869,14 +1047,13 @@ build_config() {
   ],
   "outbounds": [
     $OUTBOUNDS,
-    { "type": "direct", "tag": "direct" }
+    { "type": "direct", "tag": "direct" }$EXTRA_OUT
   ],
   "route": {
     "auto_detect_interface": true,
     "final": "$FINAL_TAG",
     "rules": [
-      { "protocol": "dns", "outbound": "$DNS_OUTBOUND_TAG" },
-      { "port": 53, "outbound": "$DNS_OUTBOUND_TAG" }
+      $DNS_ROUTE_RULES$BYPASS_RULES
     ]
   }
 }
@@ -1161,6 +1338,7 @@ start_bypass() {
     validate_proxy || die "No proxy configured. Run: su -c 'sh $SELF proxy set'"
   fi
 
+  ROLLBACK_ON_DIE=1
   save_state
   block_ipv6
 
@@ -1201,6 +1379,7 @@ start_bypass() {
     die "Tunnel failed to start. Network restored."
   fi
 
+  ROLLBACK_ON_DIE=""
   apply_private_dns
 
   printf '%s' "$MODE" > "$MODE_FILE"
@@ -1221,7 +1400,7 @@ start_bypass() {
     both)  ok "Active: WARP + Proxy | IP: $T_IP | Loc: $T_LOC | Chain: WARP -> $(proxy_summary)" ;;
   esac
 
-  dns_ready && ok "DNS: OK" || warn "DNS check retrying (curl exit ${DNS_RC:-?})"
+  dns_ready && ok "DNS: OK" || warn "DNS check failed (curl exit ${DNS_RC:-?}) - see: sh $SELF logs / doctor"
   return 0
 }
 
@@ -1442,9 +1621,11 @@ autostart() {
       mkdir -p /data/adb/service.d
       cat > "$BOOT_HOOK" <<EOF
 #!/system/bin/sh
-until [ "\$(getprop sys.boot_completed)" = "1" ]; do sleep 5; done
-sleep 15
-FAST_START=1 sh $SELF start --no-ask >> $WORK_DIR/boot.log 2>&1
+(
+  until [ "\$(getprop sys.boot_completed)" = "1" ]; do sleep 5; done
+  sleep 15
+  FAST_START=1 sh $SELF start --no-ask >> $WORK_DIR/boot.log 2>&1
+) &
 EOF
       chmod 755 "$BOOT_HOOK"
       ok "Autostart enabled ($BOOT_HOOK)."
@@ -1468,6 +1649,7 @@ usage() {
   say "  proxy on | proxy off        (Proxy or Xray link)"
   say "  dpi on | dpi off            (ByeDPI Anti-DPI packet fragmentation)"
   say "  all on | all off            (WARP + Proxy/Xray/ByeDPI together)"
+  say "  env: DNS_HIJACK=0 (old DNS routing) | TLS_FRAG=0 | WARP_ENGINE=wireproxy | KEEP_ON_FAIL=1"
   say "  proxy set | proxy clear | proxy status"
   say "  install | status | logs | doctor | renew | autostart on|off | uninstall"
 }
@@ -1483,7 +1665,7 @@ load_user_conf
 WARP_FIXED=""; [ -n "$WARP_ENDPOINT$WARP_PORT" ] && WARP_FIXED=1
 SB_VER="${SB_VER:-1.10.1}"
 XRAY_VER="${XRAY_VER:-24.11.30}"
-BYEDPI_VER="${BYEDPI_VER:-0.16.1}"
+BYEDPI_VER="${BYEDPI_VER:-0.17.3}"
 WP_VER="${WP_VER:-1.0.9}"
 WARP_ENGINE="${WARP_ENGINE:-sing-box}"
 WARP_ENDPOINT="${WARP_ENDPOINT:-162.159.192.1}"
