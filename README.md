@@ -1,5 +1,7 @@
 # Bypass-Blocking-Tool
 
+An all-in-one Android root utility to bypass ISP restrictions, DPI censorship, and blocked websites across Wi-Fi and Mobile Data via an automated Cloudflare WARP tunnel.
+
 ## Root Network Unblocker (v2.6)
 
 Root utility for Android (run from Termux) that routes all device traffic through Cloudflare WARP and/or your own proxy, changing your IP and bypassing ISP / DPI blocks. No need to install the 1.1.1.1 app.
