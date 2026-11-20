@@ -17,7 +17,7 @@ A standalone root script for Android to bypass network restrictions, DPI blocks,
 ### 1. Download & Prepare Script (One-time setup)
 Run this command in Termux to download the script directly from GitHub:
 ```bash
-su -c 'curl -sL https://githubusercontent.com -o /data/local/tmp/unblock.sh && chmod 755 /data/local/tmp/unblock.sh'
+curl -sL "https://githubusercontent.com" -o ~/unblock.sh && su -c 'mv ~/unblock.sh /data/local/tmp/unblock.sh && chmod 755 /data/local/tmp/unblock.sh'
 ```
 
 ### 2. Install Engine & Register WARP (One-time setup)
