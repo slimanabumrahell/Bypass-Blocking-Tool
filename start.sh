@@ -1,24 +1,31 @@
 #!/system/bin/sh
-# Start wrapper for Root Network Unblocker & DPI Bypass Suite
-# Usage: sh start.sh [warp|dpi|proxy|all]      (no argument = auto)
-#        sh start.sh status | logs | doctor | renew
+# Start the unblocker.
+#
+#   sh start.sh warp     -> WARP only      (device -> WARP)
+#   sh start.sh proxy    -> proxy only     (device -> proxy)
+#   sh start.sh all      -> WARP + proxy   (device -> WARP -> proxy)
+#   sh start.sh          -> classic: asks whether to use a proxy
+#   sh start.sh --no-ask -> no questions, uses saved settings
+#   sh start.sh status | logs | doctor   -> shortcuts for the same commands of unblock.sh
+#
+# Keep this file next to unblock.sh. Works from Termux (uses su) or as root.
 
 SELF="/data/local/tmp/unblock.sh"
 HERE=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
 
 if [ "$(id -u)" -ne 0 ]; then
-    command -v su >/dev/null 2>&1 || { echo "[x] 'su' not found - root is required."; exit 1; }
-    exec su -c "sh '$HERE/start.sh' $*"
+  command -v su >/dev/null 2>&1 || { echo "[x] 'su' not found - root is required."; exit 1; }
+  exec su -c "sh '$HERE/start.sh' $*"
 fi
 
-# refresh the installed copy when a newer unblock.sh sits next to this wrapper
+# keep the installed copy in sync with the one next to this file
 if [ -f "$HERE/unblock.sh" ] && ! cmp -s "$HERE/unblock.sh" "$SELF" 2>/dev/null; then
-    cp "$HERE/unblock.sh" "$SELF" && chmod 755 "$SELF"
+  cp "$HERE/unblock.sh" "$SELF" && chmod 755 "$SELF"
 fi
-[ -f "$SELF" ] || { echo "[x] $SELF not found. Run the install command from the README first."; exit 1; }
+[ -f "$SELF" ] || { echo "[x] $SELF not found. Put unblock.sh next to start.sh."; exit 1; }
 
 case "$1" in
-    warp|dpi|proxy|all) _m="$1"; shift; exec sh "$SELF" "$_m" on "$@" ;;
-    status|logs|doctor|renew|selfcheck) exec sh "$SELF" "$@" ;;
-    *) exec sh "$SELF" start "$@" ;;
+  warp|proxy|all)      _m="$1"; shift; exec sh "$SELF" "$_m" on "$@" ;;
+  status|logs|doctor)  exec sh "$SELF" "$@" ;;
+  *)                   exec sh "$SELF" start "$@" ;;
 esac
