@@ -850,10 +850,15 @@ probe_engine() {
                 [ -n "$PROXY_USER" ] && set -- "$@" --proxy-user "$PROXY_USER:$PROXY_PASS"
             fi ;;
     esac
+    PROBE_ERR=""
     _pi=0
-    while [ "$_pi" -lt 3 ]; do
-        _tr=$(curl -s --connect-timeout 6 --max-time 10 "$@" https://1.1.1.1/cdn-cgi/trace 2>/dev/null)
-        case "$_tr" in *ip=*) return 0 ;; esac
+    while [ "$_pi" -lt 2 ]; do
+        for _u in https://www.cloudflare.com/cdn-cgi/trace https://1.1.1.1/cdn-cgi/trace https://api.ipify.org; do
+            _out=$(curl -sS --connect-timeout 8 --max-time 12 "$@" "$_u" 2>&1)
+            _rc=$?
+            if [ "$_rc" -eq 0 ] && [ -n "$_out" ]; then return 0; fi
+            PROBE_ERR="curl exit $_rc: $(printf '%s' "$_out" | tail -n 1)"
+        done
         _pi=$((_pi + 1)); sleep 1
     done
     return 1
@@ -869,7 +874,7 @@ start_engines() {
             start_warp_engine || return 1
             [ -n "$PROXY_URL" ] && { start_xray_engine warp || return 1; } ;;
     esac
-    probe_engine || { warn "Engine started but cannot reach the internet (check proxy / endpoint / DPI_ARGS)."; return 1; }
+    probe_engine || { warn "Engine started but cannot reach the internet (check proxy / endpoint / DPI_ARGS)."; [ -n "$PROBE_ERR" ] && warn "Reason -> $PROBE_ERR"; return 1; }
     return 0
 }
 
