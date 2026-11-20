@@ -1,7 +1,7 @@
 #!/system/bin/sh
 # Stop the unblocker and restore your normal network settings.
 #
-#   sh stop.sh          -> stop everything (WARP + proxy)
+#   sh stop.sh          -> stop everything (WARP + proxy); also repairs a crashed tunnel
 #   sh stop.sh all      -> same
 #   sh stop.sh warp     -> stop only WARP  (proxy keeps running if it was chained)
 #   sh stop.sh proxy    -> stop only the proxy (WARP keeps running if it was chained)

@@ -6,6 +6,7 @@
 #   sh start.sh all      -> WARP + proxy   (device -> WARP -> proxy)
 #   sh start.sh          -> classic: asks whether to use a proxy
 #   sh start.sh --no-ask -> no questions, uses saved settings
+#   sh start.sh status | logs | doctor   -> shortcuts for the same commands of unblock.sh
 #
 # Keep this file next to unblock.sh. Works from Termux (uses su) or as root.
 
@@ -24,6 +25,7 @@ fi
 [ -f "$SELF" ] || { echo "[x] $SELF not found. Put unblock.sh next to start.sh."; exit 1; }
 
 case "$1" in
-  warp|proxy|all) _m="$1"; shift; exec sh "$SELF" "$_m" on "$@" ;;
-  *)              exec sh "$SELF" start "$@" ;;
+  warp|proxy|all)      _m="$1"; shift; exec sh "$SELF" "$_m" on "$@" ;;
+  status|logs|doctor)  exec sh "$SELF" "$@" ;;
+  *)                   exec sh "$SELF" start "$@" ;;
 esac
