@@ -534,7 +534,7 @@ build_config() {
       load_creds
       OUTBOUNDS="$(wg_outbound)"
       FINAL_TAG="warp-out"
-      DNS_SERVER='{ "tag": "cf-dns", "type": "https", "server": "1.1.1.1", "detour": "warp-out" }'
+      DNS_SERVER='{ "tag": "cf-dns", "address": "https://1.1.1.1/dns-query", "detour": "warp-out" }'
       DNS_OUTBOUND_TAG="warp-out"
       ;;
     both)
@@ -542,17 +542,17 @@ build_config() {
       validate_proxy || die "No proxy configured. Run: su -c 'sh $SELF proxy set'"
       OUTBOUNDS="$(proxy_outbound),$(wg_outbound)"
       FINAL_TAG="proxy-out"
-      DNS_SERVER='{ "tag": "cf-dns", "type": "https", "server": "1.1.1.1", "detour": "warp-out" }'
+      DNS_SERVER='{ "tag": "cf-dns", "address": "https://1.1.1.1/dns-query", "detour": "warp-out" }'
       DNS_OUTBOUND_TAG="warp-out"
       ;;
     proxy)
       validate_proxy || die "No proxy configured. Run: su -c 'sh $SELF proxy set'"
       OUTBOUNDS="$(proxy_outbound)"
       FINAL_TAG="proxy-out"
-      DNS_SERVER='{ "tag": "cf-dns", "type": "tcp", "server": "1.1.1.1", "detour": "proxy-out" }'
+      DNS_SERVER='{ "tag": "cf-dns", "address": "tcp://1.1.1.1", "detour": "proxy-out" }'
       DNS_OUTBOUND_TAG="proxy-out"
       if [ -n "${PROXY_IP:-}" ] && ! is_ip "$PROXY_IP"; then
-        DNS_SERVER="$DNS_SERVER, { \"tag\": \"boot-dns\", \"type\": \"udp\", \"server\": \"1.1.1.1\", \"detour\": \"direct\" }"
+        DNS_SERVER="$DNS_SERVER, { \"tag\": \"boot-dns\", \"address\": \"1.1.1.1\", \"detour\": \"direct\" }"
         DNS_RULES="\"rules\": [ { \"domain\": [\"$(json_esc "$PROXY_IP")\"], \"server\": \"boot-dns\" } ],"
       fi
       ;;
