@@ -513,7 +513,18 @@ std_proxy_outbound() {
         "$_t" "$_extra" "$_auth" "$_det" "$(json_esc "$PROXY_IP")" "$PROXY_PORT"
 }
 
+resolve_ip() {
+    ping -c 1 -W 2 "$1" 2>/dev/null | sed -n 's/^[^(]*(\([0-9.]*\)).*/\1/p' | head -n 1
+}
+
 build_singbox_config() {
+    # native std proxy: sing-box itself dials the proxy server, so keep that IP out of the TUN
+    EXCL=""
+    if [ "$MODE" = "proxy" ] && [ -z "$PROXY_URL" ]; then
+        _xip="$PROXY_IP"
+        is_ip "$_xip" || _xip=$(resolve_ip "$PROXY_IP")
+        [ -n "$_xip" ] && EXCL=", \"route_exclude_address\": [ \"$_xip/32\" ]"
+    fi
     case "$MODE" in
         warp) OUTB=$(socks_out up "$SOCKS_WARP") ;;
         dpi)  OUTB=$(socks_out up "$SOCKS_DPI") ;;
@@ -546,7 +557,7 @@ build_singbox_config() {
       "auto_route": true,
       "strict_route": true,
       "stack": "$TUN_STACK",
-      "exclude_uid": [ $ENGINE_UID ]
+      "exclude_uid": [ $ENGINE_UID ]$EXCL
     }
   ],
   "outbounds": [
@@ -1069,6 +1080,7 @@ start_bypass() {
     printf '%s' "$MODE" > "$MODE_FILE"
     if [ "$MODE" = "proxy" ] || [ "$MODE" = "both" ]; then proxy_summary > "$ACTIVE_PROXY_FILE"; else rm -f "$ACTIVE_PROXY_FILE"; fi
     if ! verify_tunnel; then
+        [ -s "$LOG_FILE" ] && { warn "sing-box log (last lines):"; tail -n 8 "$LOG_FILE"; }
         stop_bypass
         die "Tunnel is up but no traffic passes. Network restored."
     fi
