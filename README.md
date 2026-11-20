@@ -41,56 +41,14 @@ su -c 'sh /data/local/tmp/unblock.sh warp on'
 su -c 'sh /data/local/tmp/unblock.sh warp off'
 ```
 
-### 3. Proxy Only (Start / Stop)
-
-Supported types: `socks5`, `socks4`, `http`, `https`.
-
-- **Set the proxy once (interactive: type, IP, port, user/pass):**
-
-```sh
-su -c 'sh /data/local/tmp/unblock.sh proxy set'
-```
-
-- **Start proxy** *(uses saved proxy; if WARP is already running, layers the proxy over WARP)*:
-
-```sh
-su -c 'sh /data/local/tmp/unblock.sh proxy on'
-```
-
-- **Start proxy without authentication:**
-
-```sh
-su -c 'PROXY_TYPE=socks5 PROXY_IP=1.2.3.4 PROXY_PORT=1080 sh /data/local/tmp/unblock.sh proxy on'
-```
-
-- **Start proxy with username & password:**
-
-```sh
-su -c 'PROXY_TYPE=http PROXY_IP=1.2.3.4 PROXY_PORT=8080 PROXY_USER=user PROXY_PASS=pass sh /data/local/tmp/unblock.sh proxy on'
-```
-
-- **Stop proxy** *(if WARP is running underneath, WARP stays running)*:
-
-```sh
-su -c 'sh /data/local/tmp/unblock.sh proxy off'
-```
-
-> Before starting in proxy-only mode, the script checks whether the proxy responds directly. If it does not (for example, when blocked by the ISP), it can chain the proxy through WARP instead (`device -> WARP -> proxy`).
-
-### 4. WARP + Proxy Together (Start / Stop)
+### 2. WARP + Proxy Together (Start / Stop)
 
 Traffic path: `device -> WARP -> proxy -> internet`. Useful both for double-hopping and when your ISP blocks direct access to the proxy.
 
 - **Start both (uses saved proxy):**
 
 ```sh
-su -c 'sh /data/local/tmp/unblock.sh all on'
-```
-
-- **Start both with a custom proxy:**
-
-```sh
-su -c 'PROXY_TYPE=socks5 PROXY_IP=1.2.3.4 PROXY_PORT=1080 PROXY_USER=user PROXY_PASS=pass sh /data/local/tmp/unblock.sh all on'
+su -c 'sh /data/local/tmp/unblock.sh proxy set' su -c 'sh /data/local/tmp/unblock.sh all on'
 ```
 
 - **Stop both (restores normal network settings):**
