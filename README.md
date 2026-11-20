@@ -1,7 +1,5 @@
 # Bypass-Blocking-Tool
 
-Root utility for Android (run from Termux) that routes **all** device traffic (Wi-Fi + Mobile Data) through a Cloudflare WARP tunnel and/or your own proxy (sing-box TUN). No need to install the 1.1.1.1 app.
-
 ## Root Network Unblocker (v2.3)
 
 Root utility for Android (run from Termux) that routes all device traffic through Cloudflare WARP and/or your own proxy, changing your IP and bypassing ISP / DPI blocks. No need to install the 1.1.1.1 app.
@@ -29,12 +27,14 @@ pkg install -y curl && mkdir -p ~/unblocker && cd ~/unblocker && for f in unbloc
 
 - Start WARP:
 
-```su -c 'WARP_PORT=4500 sh /data/local/tmp/unblock.sh warp on'
+```sh
+su -c 'WARP_PORT=4500 sh /data/local/tmp/unblock.sh warp on'
 ```
 
 - Stop WARP:
 
-```su -c 'WARP_PORT=4500 sh /data/local/tmp/unblock.sh warp on'
+```sh
+su -c 'WARP_PORT=4500 sh /data/local/tmp/unblock.sh warp off'
 ```
 
 ### 3. Proxy Only (Start / Stop)
