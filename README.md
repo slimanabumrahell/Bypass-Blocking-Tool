@@ -50,7 +50,8 @@ Traffic path: `device -> WARP -> proxy -> internet`. Useful both for double-hopp
 - **Start both (uses saved proxy):**
 
 ```sh
-su -c 'sh /data/local/tmp/unblock.sh proxy set' su -c 'sh /data/local/tmp/unblock.sh all on'
+su -c 'sh /data/local/tmp/unblock.sh proxy set'
+su -c 'sh /data/local/tmp/unblock.sh all on'
 ```
 
 - **Stop both (restores normal network settings):**
