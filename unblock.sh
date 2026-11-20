@@ -69,12 +69,19 @@ ask() {
   eval "$1=\$_a"
 }
 
-# ask_secret VAR "prompt"   -> same, but nothing is echoed (passwords)
+# ask_secret VAR "prompt"   -> read password safely without hanging on stty/su
 ask_secret() {
   printf '%b' "${CYAN}$2${NC}"
-  stty -echo 2>/dev/null
-  read -r _a || { stty echo 2>/dev/null; die "Input closed."; }
-  stty echo 2>/dev/null
+  _had_tty=0
+  if [ -t 0 ] && command -v stty >/dev/null 2>&1; then
+    stty -echo 2>/dev/null && _had_tty=1
+  fi
+  if ! IFS= read -r _a; then
+    [ "$_had_tty" -eq 1 ] && stty echo 2>/dev/null
+    printf '\n'
+    die "Input closed."
+  fi
+  [ "$_had_tty" -eq 1 ] && stty echo 2>/dev/null
   printf '\n'
   eval "$1=\$_a"
 }
@@ -82,9 +89,9 @@ ask_secret() {
 # confirm "prompt" Y|N      -> returns 0 for yes
 confirm() {
   while :; do
-    if [ "$2" = "Y" ]; then printf '%b' "${CYAN}$1 [Y/n]: ${NC}"; else printf '%b' "${CYAN}$1 [y/N]: ${NC}"; fi
+    if [ "$2" = "Y" ]; then printf '%b' "${CYAN}$1 [Y/n]:${NC}"; else printf '%b' "${CYAN}$1 [y/N]:${NC}"; fi
     read -r _a || die "Input closed."
-    [ -n "$_a" ] || _a="$2"
+    [ -n "$_a" ] \vert{}\vert{} _a="$2"
     case "$_a" in
       y|Y|yes|YES) return 0 ;;
       n|N|no|NO)   return 1 ;;
@@ -92,16 +99,16 @@ confirm() {
   done
 }
 
-is_ip()      { printf '%s' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; }
-valid_host() { printf '%s' "$1" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$'; }
-valid_port() { printf '%s' "$1" | grep -Eq '^[0-9]{1,5}$' && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
+is_ip()      { printf '%s' "$1" \vert{} grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; }
+valid_host() { printf '%s' "$1" \vert{} grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$'; }
+valid_port() { printf '%s' "$1" \vert{} grep -Eq '^[0-9]{1,5}$' && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
 
 # single-quote a value so it can be safely sourced from the config file
 sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 
 proxy_summary() {
   S="$PROXY_TYPE://$PROXY_IP:$PROXY_PORT"
-  [ -n "$PROXY_USER" ] && S="$S (user: $PROXY_USER)"
+  [ -n "$PROXY_USER" ] && S="$S (user:$PROXY_USER)"
   printf '%s' "$S"
 }
 
@@ -176,7 +183,7 @@ maybe_ask_proxy() {
   [ -n "$PROXY_EXPLICIT" ] && return 0
   [ -t 0 ] || return 0
   if [ -n "$PROXY_IP" ]; then
-    say "${CYAN}Saved proxy:${NC} $(proxy_summary)"
+    say "${CYAN}Saved proxy:${NC}$(proxy_summary)"
     say "  1) Use it"
     say "  2) Change it"
     say "  3) No proxy this time"
@@ -196,7 +203,7 @@ maybe_ask_proxy() {
 
 # Used by the "proxy" and "all" modes: a proxy is required
 ensure_proxy() {
-  if [ -z "$PROXY_IP" ] || [ -z "$PROXY_PORT" ]; then
+  if [ -z "$PROXY_IP" ] \vert{}\vert{} [ -z "$PROXY_PORT" ]; then
     [ -t 0 ] || die "No proxy saved. Run: su -c 'sh $SELF proxy set'"
     warn "No proxy saved yet - let's set one up."
     proxy_wizard
@@ -235,8 +242,8 @@ download_core() {
 register_warp() {
   need_curl
   KEYS=$("$SINGBOX_BIN" generate wg-keypair 2>/dev/null)
-  PRIV_KEY=$(printf '%s\n' "$KEYS" | sed -n 's/^PrivateKey:[[:space:]]*//p')
-  PUB_KEY=$(printf '%s\n' "$KEYS" | sed -n 's/^PublicKey:[[:space:]]*//p')
+  PRIV_KEY=$(printf '\%s\n' "$KEYS" | sed -n 's/^PrivateKey:[[:space:]]*//p')
+  PUB_KEY=$(printf '\%s\n' "$KEYS" | sed -n 's/^PublicKey:[[:space:]]*//p')
   [ -n "$PRIV_KEY" ] && [ -n "$PUB_KEY" ] || die "Key generation failed."
 
   info "Registering a free Cloudflare WARP account..."
@@ -250,19 +257,19 @@ register_warp() {
       -H "User-Agent: okhttp/3.12.1" \
       -H "CF-Client-Version: a-6.3-1922" \
       -d "$BODY")
-    CLIENT_IPV4=$(printf '%s' "$RES" | grep -o '"v4":"172\.[^"]*"' | head -n1 | cut -d'"' -f4)
+    CLIENT_IPV4=$(printf '\%s' "$RES" | grep -o '"v4":"172\.[^"]*"' | head -n1 | cut -d'"' -f4)
     [ -n "$CLIENT_IPV4" ] && break
   done
   [ -n "$CLIENT_IPV4" ] || die "WARP registration failed (API unreachable or rate-limited). Try again later."
 
-  PEER_PUB=$(printf '%s' "$RES" | grep -o '"public_key":"[^"]*"' | head -n1 | cut -d'"' -f4)
-  CLIENT_ID=$(printf '%s' "$RES" | grep -o '"client_id":"[^"]*"' | head -n1 | cut -d'"' -f4)
+  PEER_PUB=$(printf '\%s' "$RES" | grep -o '"public_key":"[^"]*"' | head -n1 | cut -d'"' -f4)
+  CLIENT_ID=$(printf '\%s' "$RES" | grep -o '"client_id":"[^"]*"' | head -n1 | cut -d'"' -f4)
   [ -n "$PEER_PUB" ] || die "Could not read WARP peer key from API response."
 
   # "reserved" bytes = first 3 bytes of client_id (needed on some networks)
   RESERVED=""
   if [ -n "$CLIENT_ID" ]; then
-    R=$(printf '%s' "$CLIENT_ID" | base64 -d 2>/dev/null | od -An -tu1 2>/dev/null | tr -s ' ' ',' | sed 's/^,//; s/,$//')
+    R=$(printf '%s' "$CLIENT_ID" \vert{} base64 -d 2>/dev/null \vert{} od -An -tu1 2>/dev/null \vert{} tr -s ' ' ',' \vert{} sed 's/^,//; s/,$//')
     printf '%s' "$R" | grep -Eq '^[0-9]+,[0-9]+,[0-9]+$' && RESERVED="$R"
   fi
 
@@ -276,12 +283,12 @@ RESERVED="$RESERVED"
 EOF
   )
   chmod 600 "$CRED_FILE"
-  ok "WARP account saved to $CRED_FILE (IP: $CLIENT_IPV4)"
+  ok "WARP account saved to $CRED_FILE (IP:$CLIENT_IPV4)"
 }
 
 install_core() {
   info "Installing Root Network Unblocker v2.3..."
-  if [ ! -x "$SINGBOX_BIN" ] || [ -n "$FORCE" ]; then download_core; else ok "Core already present (use FORCE=1 to re-download)."; fi
+  if [ ! -x "$SINGBOX_BIN" ] \vert{}\vert{} [ -n "$FORCE" ]; then download_core; else ok "Core already present (use FORCE=1 to re-download)."; fi
   if [ ! -f "$CRED_FILE" ] && [ -f "$OLD_CRED_FILE" ]; then
     mkdir -p "$(dirname "$CRED_FILE")"; cp "$OLD_CRED_FILE" "$CRED_FILE"; chmod 600 "$CRED_FILE"
     ok "Migrated old credentials to $CRED_FILE"
@@ -310,14 +317,14 @@ load_creds() {
   fi
   . "$CRED_FILE"
   # strip hidden \r / newlines / spaces that break the JSON
-  PRIV_KEY=$(printf '%s' "$PRIV_KEY" | tr -cd 'A-Za-z0-9+/=')
-  PEER_PUB=$(printf '%s' "$PEER_PUB" | tr -cd 'A-Za-z0-9+/=')
-  CLIENT_IPV4=$(printf '%s' "$CLIENT_IPV4" | tr -cd '0-9.')
-  RESERVED=$(printf '%s' "$RESERVED" | tr -cd '0-9,')
+  PRIV_KEY=$(printf '\%s' "$PRIV_KEY" | tr -cd 'A-Za-z0-9+/=')
+  PEER_PUB=$(printf '\%s' "$PEER_PUB" | tr -cd 'A-Za-z0-9+/=')
+  CLIENT_IPV4=$(printf '\%s' "$CLIENT_IPV4" | tr -cd '0-9.')
+  RESERVED=$(printf '\%s' "$RESERVED" | tr -cd '0-9,')
   [ "${#PRIV_KEY}" -eq 44 ] && [ "${#PEER_PUB}" -eq 44 ] \
-    && printf '%s' "$CLIENT_IPV4" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' \
+    && printf '%s' "$CLIENT_IPV4" \vert{} grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' \
     || die "WARP credentials are corrupted. Run: su -c 'sh $SELF renew'"
-  printf '%s' "$RESERVED" | grep -Eq '^[0-9]+,[0-9]+,[0-9]+$' || RESERVED=""
+  printf '%s' "$RESERVED" \vert{} grep -Eq '^[0-9]+,[0-9]+,[0-9]+$' || RESERVED=""
 }
 
 wg_outbound() {
@@ -372,8 +379,7 @@ proxy_outbound() {
   "type": "$P_TYPE",
   "tag": "proxy-out",
   $EXTRA
-  $AUTH_JSON
-  $DETOUR_JSON
+  $AUTH_JSON$DETOUR_JSON
   "server": "$(json_esc "$PROXY_IP")",
   "server_port": $PROXY_PORT
 }
@@ -381,10 +387,10 @@ EOF
 }
 
 validate_proxy() {
-  [ -n "$PROXY_IP" ] || [ -n "$PROXY_PORT" ] || return 1      # no proxy requested
+  [ -n "$PROXY_IP" ] \vert{}\vert{} [ -n "$PROXY_PORT" ] || return 1      # no proxy requested
   [ -n "$PROXY_IP" ] && [ -n "$PROXY_PORT" ] || die "Both proxy IP and port are required."
   [ -n "$PROXY_TYPE" ] || PROXY_TYPE="http"
-  PROXY_TYPE=$(printf '%s' "$PROXY_TYPE" | tr 'A-Z' 'a-z')
+  PROXY_TYPE=$(printf '\%s' "$PROXY_TYPE" | tr 'A-Z' 'a-z')
   case "$PROXY_TYPE" in
     socks|socks5h) PROXY_TYPE="socks5" ;;
     socks4a)       PROXY_TYPE="socks4" ;;
@@ -409,8 +415,7 @@ build_config() {
     both)
       load_creds
       validate_proxy || die "No proxy configured. Run: su -c 'sh $SELF proxy set'"
-      OUTBOUNDS="$(proxy_outbound),
-    $(wg_outbound)"
+      OUTBOUNDS="$(proxy_outbound),$(wg_outbound)"
       FINAL_TAG="proxy-out"
       DNS_SERVER='{ "tag": "cf-dns", "address": "1.1.1.1", "detour": "warp-out" }'
       ;;
@@ -616,195 +621,4 @@ stop_bypass() {
   fi
   killall sing-box 2>/dev/null || pkill -f "$SINGBOX_BIN" 2>/dev/null
   restore_system
-  rm -f "$ACTIVE_PROXY_FILE" "$MODE_FILE"
-  say "${RED}[-] Stopped. Network restored to previous settings.${NC}"
-}
-
-# switch_mode warp|proxy|both : start it, or restart if another mode is running
-switch_mode() {
-  NEW="$1"
-  if is_running; then
-    if [ "$(current_mode)" = "$NEW" ]; then warn "Already running in '$NEW' mode."; return 0; fi
-    stop_bypass
-  fi
-  MODE="$NEW"
-  start_bypass
-}
-
-check_status() {
-  if is_running; then
-    ok "Status: RUNNING (PID $(cat "$PID_FILE"))"
-    case "$(current_mode)" in
-      warp)  info "Mode      : WARP only" ;;
-      proxy) info "Mode      : proxy only" ;;
-      both)  info "Mode      : WARP + proxy" ;;
-      *)     info "Mode      : unknown" ;;
-    esac
-    TRACE=$(curl -s --connect-timeout 6 --max-time 10 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null)
-    if [ -n "$TRACE" ]; then
-      info "Public IP : $(printf '%s\n' "$TRACE" | sed -n 's/^ip=//p')"
-      info "Country   : $(printf '%s\n' "$TRACE" | sed -n 's/^loc=//p')"
-      info "WARP      : $(printf '%s\n' "$TRACE" | sed -n 's/^warp=//p')  (on/plus = WARP active; off is normal in proxy-only mode)"
-      [ -s "$ACTIVE_PROXY_FILE" ] && info "Proxy     : $(cat "$ACTIVE_PROXY_FILE")" || info "Proxy     : none"
-    else
-      warn "Could not reach Cloudflare through the tunnel."
-    fi
-  else
-    say "${RED}[-] Status: STOPPED${NC}"
-  fi
-}
-
-show_logs() { [ -f "$LOG_FILE" ] && tail -n 40 "$LOG_FILE" || warn "No log file yet."; }
-
-# ---------------------------------------------------------------- warp / proxy / all commands
-
-warp_cmd() {
-  case "$1" in
-    on)  switch_mode warp ;;
-    off)
-      case "$(current_mode)" in
-        warp) stop_bypass ;;
-        both) info "Turning WARP off, keeping the proxy..."; switch_mode proxy ;;
-        *)    warn "WARP is not running." ;;
-      esac ;;
-    status|"") check_status ;;
-    *) die "Usage: warp on | warp off | warp status" ;;
-  esac
-}
-
-proxy_cmd() {
-  case "$1" in
-    on)  switch_mode proxy ;;
-    off|stop)
-      case "$(current_mode)" in
-        proxy) stop_bypass ;;
-        both)  info "Turning the proxy off, keeping WARP..."; switch_mode warp ;;
-        *)     warn "The proxy is not running." ;;
-      esac ;;
-    set)
-      [ -t 0 ] || die "'proxy set' needs an interactive terminal (or edit $USER_CONF)."
-      proxy_wizard
-      save_proxy_conf
-      ok "Proxy saved: $(proxy_summary)"
-      CM=$(current_mode)
-      case "$CM" in
-        proxy|both)
-          confirm "Tunnel is running. Restart now to apply the new proxy?" Y && { stop_bypass; MODE="$CM"; start_bypass; } ;;
-        warp) info "Use 'proxy on' (proxy only) or 'all on' (WARP + proxy) to start it." ;;
-        *)    info "Start it with: proxy on   |   all on" ;;
-      esac
-      ;;
-    clear|remove)
-      remove_proxy_conf
-      clear_proxy_vars
-      ok "Saved proxy removed."
-      case "$(current_mode)" in
-        proxy) stop_bypass ;;
-        both)  info "Restarting with WARP only..."; switch_mode warp ;;
-      esac
-      ;;
-    status|"")
-      if [ -n "$PROXY_IP" ]; then info "Saved proxy  : $(proxy_summary)"; else info "Saved proxy  : none"; fi
-      if is_running && [ -s "$ACTIVE_PROXY_FILE" ]; then info "Active proxy : $(cat "$ACTIVE_PROXY_FILE")"; else info "Active proxy : none"; fi
-      ;;
-    *) die "Usage: proxy on | proxy off | proxy set | proxy clear | proxy status" ;;
-  esac
-}
-
-all_cmd() {
-  case "$1" in
-    on)  switch_mode both ;;
-    off|stop)
-      if is_running; then stop_bypass; else warn "Nothing is running."; fi ;;
-    status|"") check_status ;;
-    *) die "Usage: all on | all off | all status" ;;
-  esac
-}
-
-# ---------------------------------------------------------------- autostart / uninstall
-
-autostart() {
-  case "$1" in
-    on)
-      [ -d /data/adb/service.d ] || mkdir -p /data/adb/service.d
-      cat > "$BOOT_HOOK" <<EOF
-#!/system/bin/sh
-until [ "\$(getprop sys.boot_completed)" = "1" ]; do sleep 5; done
-sleep 20
-sh $SELF start --no-ask >> $WORK_DIR/boot.log 2>&1
-EOF
-      chmod 755 "$BOOT_HOOK"
-      ok "Autostart enabled ($BOOT_HOOK). Needs Magisk / KernelSU / APatch."
-      info "At boot: WARP + proxy if a proxy is saved in $USER_CONF, otherwise WARP only."
-      ;;
-    off) rm -f "$BOOT_HOOK"; ok "Autostart disabled." ;;
-    *) die "Usage: autostart on|off" ;;
-  esac
-}
-
-uninstall_all() {
-  is_running && stop_bypass
-  rm -f "$BOOT_HOOK"
-  rm -rf "$WORK_DIR"
-  [ -n "$PURGE" ] && rm -f "$CRED_FILE" "$USER_CONF"
-  ok "Uninstalled. (Credentials kept in $CRED_FILE; use PURGE=1 to delete them too.)"
-}
-
-usage() {
-  say "${CYAN}Root Network Unblocker v2.3${NC}  (WARP and/or proxy, all device traffic)"
-  say ""
-  say "${CYAN}WARP only${NC}  (device -> WARP)"
-  say "  su -c 'sh $SELF warp on'"
-  say "  su -c 'sh $SELF warp off'"
-  say "${CYAN}Proxy only${NC} (device -> proxy)"
-  say "  su -c 'sh $SELF proxy set'      ${YELLOW}# socks5 | socks4 | http | https, ip, port, user/pass${NC}"
-  say "  su -c 'sh $SELF proxy on'"
-  say "  su -c 'sh $SELF proxy off'"
-  say "  su -c 'sh $SELF proxy clear'    ${YELLOW}# forget the saved proxy${NC}"
-  say "${CYAN}Both together${NC} (device -> WARP -> proxy)"
-  say "  su -c 'sh $SELF all on'         ${GREEN}# start both${NC}"
-  say "  su -c 'sh $SELF all off'        ${RED}# stop both, restore the network${NC}"
-  say ""
-  say "  su -c 'sh $SELF install|status|logs|renew|restart'"
-  say "  su -c 'sh $SELF start [--no-ask]'   ${YELLOW}# classic: asks about a proxy${NC}"
-  say "  su -c 'sh $SELF stop'               ${YELLOW}# same as: all off${NC}"
-  say "  su -c 'sh $SELF autostart on|off'"
-  say "  su -c 'sh $SELF uninstall'"
-  say "Env: PROXY_TYPE PROXY_IP PROXY_PORT PROXY_USER PROXY_PASS PROXY_SNI PROXY_INSECURE=1"
-  say "     WARP_PORT (2408|500|1701|4500)  WARP_ENDPOINT  TUN_STACK (system|gvisor)  SB_VER  SB_URL  FORCE=1"
-}
-
-# ---- main ----
-case "$1" in
-  ""|help|-h|--help) usage; exit 0 ;;
-esac
-
-[ "$(id -u)" -eq 0 ] || die "Root access required. Run with: su -c 'sh $SELF $1'"
-
-PROXY_EXPLICIT=""; [ -n "$PROXY_IP" ] && PROXY_EXPLICIT=1   # proxy given on the command line
-load_user_conf
-SB_VER="${SB_VER:-1.10.1}"
-WARP_ENDPOINT="${WARP_ENDPOINT:-162.159.192.1}"
-WARP_PORT="${WARP_PORT:-2408}"
-TUN_STACK="${TUN_STACK:-system}"
-MODE=""
-
-for _arg in "$@"; do
-  case "$_arg" in --no-ask|--yes|-y) NOASK=1 ;; esac
-done
-
-case "$1" in
-  install)   install_core ;;
-  start)     start_bypass ;;
-  stop)      all_cmd off ;;
-  restart)   NOASK=1; MODE="$(current_mode)"; is_running && stop_bypass; start_bypass ;;
-  status)    check_status ;;
-  logs)      show_logs ;;
-  renew)     renew_warp ;;
-  warp)      warp_cmd "$2" ;;
-  proxy)     proxy_cmd "$2" ;;
-  all|both)  all_cmd "$2" ;;
-  autostart) autostart "$2" ;;
-  uninstall) uninstall_all ;;
-  *)         usage; exit 1 ;;
-esac
+  rm -f "$ACTIVE_PROXY
