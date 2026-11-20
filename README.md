@@ -29,12 +29,12 @@ pkg install -y curl && mkdir -p ~/unblocker && cd ~/unblocker && for f in unbloc
 
 - Start WARP:
 
-```su -c ' WARP_PORT=4500 sh /data/local/tmp/unblock.sh warp on'
+```su -c 'WARP_PORT=4500 sh /data/local/tmp/unblock.sh warp on'
 ```
 
 - Stop WARP:
 
-```su -c ' WARP_PORT=4500 sh /data/local/tmp/unblock.sh warp on'
+```su -c 'WARP_PORT=4500 sh /data/local/tmp/unblock.sh warp on'
 ```
 
 ### 3. Proxy Only (Start / Stop)
