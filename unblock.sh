@@ -165,11 +165,13 @@ ask() {
 }
 
 ask_secret() {
-    if [ "$HIDE_PASS" = "1" ] && [ -r /dev/tty ]; then
+    if [ "$HIDE_PASS" = "1" ] && [ -t 0 ]; then
         printf '%b' "${CYAN}$2${NC}"
-        ( trap '' TTOU; stty -echo </dev/tty ) 2>/dev/null
-        read -r _a </dev/tty || _a=""
-        ( trap '' TTOU; stty echo </dev/tty ) 2>/dev/null
+        trap 'stty echo 2>/dev/null; exit 130' INT
+        stty -echo 2>/dev/null
+        read -r _a || _a=""
+        stty echo 2>/dev/null
+        trap - INT
         printf '\n'
     else
         printf '%b' "${CYAN}$2(visible) ${NC}"
