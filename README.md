@@ -1,6 +1,6 @@
 # Bypass-Blocking-Tool
 
-## Root Network Unblocker (v2.3)
+## Root Network Unblocker (v2.4)
 
 Root utility for Android (run from Termux) that routes all device traffic through Cloudflare WARP and/or your own proxy, changing your IP and bypassing ISP / DPI blocks. No need to install the 1.1.1.1 app.
 
@@ -115,6 +115,13 @@ Switching while running: `warp off` while both run keeps the proxy; `proxy off` 
 - **https** proxy = reached over TLS. Use `PROXY_SNI=name` to set the server name, or `PROXY_INSECURE=1` to skip verification (not recommended).
 - **Proxy-only mode** uses DNS over TCP through the proxy and turns Android Private DNS off while running. HTTP/HTTPS proxies cannot carry UDP, so UDP apps (calls, some games) will not work in this mode.
 - Proxy values passed on the command line are used for that run only. Use `proxy set` to save them in `/data/adb/unblock.conf`.
+
+## What's new in v2.4
+
+- **Password prompt no longer freezes** in `proxy set` (the old `stty -echo` hangs under `su -c`). The password is now visible while typing; use `HIDE_PASS=1` for hidden input.
+- **WARP auto-endpoint search**: tries several Cloudflare IP:port pairs (2408, 500, 4500, 1701...) and keeps the first one that really passes traffic (`warp=on`). Pin one with `WARP_PORT` / `WARP_ENDPOINT` to skip the search.
+- **Quiet Android settings errors**: `cmd: Failure calling service settings` is handled; Private DNS is only changed when the original value can be read and restored.
+- **464XLAT detection**: IPv6 is not blocked on IPv6-only mobile networks (or set `BLOCK_IPV6=0`).
 
 ## Troubleshooting
 

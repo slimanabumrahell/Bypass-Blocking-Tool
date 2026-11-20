@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# Root Network Unblocker v2.3 - Cloudflare WARP TUN tunnel (sing-box) for rooted Android
+# Root Network Unblocker v2.4 - Cloudflare WARP TUN tunnel (sing-box) for rooted Android
 # Path: /data/local/tmp/unblock.sh
 #
 # Modes:    warp  = device -> WARP -> internet
@@ -48,7 +48,7 @@ need_curl() { command -v curl >/dev/null 2>&1 || die "curl not found. In Termux 
 json_esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
 # Optional persistent settings (/data/adb/unblock.conf). Command-line env wins.
-CONF_VARS="PROXY_TYPE PROXY_IP PROXY_PORT PROXY_USER PROXY_PASS PROXY_SNI PROXY_INSECURE WARP_ENDPOINT WARP_PORT TUN_STACK SB_VER"
+CONF_VARS="PROXY_TYPE PROXY_IP PROXY_PORT PROXY_USER PROXY_PASS PROXY_SNI PROXY_INSECURE WARP_ENDPOINT WARP_PORT TUN_STACK SB_VER BLOCK_IPV6 HIDE_PASS"
 load_user_conf() {
   [ -f "$USER_CONF" ] || return 0
   for v in $CONF_VARS; do
@@ -66,16 +66,26 @@ load_user_conf() {
 ask() {
   printf '%b' "${CYAN}$2${NC}"
   read -r _a || die "Input closed."
+  _a=$(printf '%s' "$_a" | tr -d '\r')      # Termux/su can add a hidden CR
   eval "$1=\$_a"
 }
 
-# ask_secret VAR "prompt"   -> same, but nothing is echoed (passwords)
+# ask_secret VAR "prompt"   -> read a password.
+# FIX: the old version ran "stty -echo", which freezes forever under "su -c" on many
+# devices (the process is not in the foreground group of the terminal -> SIGTTOU).
+# Now the password is shown while you type (default). Hidden input is optional:
+#   HIDE_PASS=1  (uses stty on /dev/tty with SIGTTOU ignored)
 ask_secret() {
-  printf '%b' "${CYAN}$2${NC}"
-  stty -echo 2>/dev/null
-  read -r _a || { stty echo 2>/dev/null; die "Input closed."; }
-  stty echo 2>/dev/null
-  printf '\n'
+  if [ "$HIDE_PASS" = "1" ] && [ -r /dev/tty ]; then
+    printf '%b' "${CYAN}$2${NC}"
+    ( trap '' TTOU; stty -echo </dev/tty ) 2>/dev/null
+    read -r _a </dev/tty || _a=""
+    ( trap '' TTOU; stty echo </dev/tty ) 2>/dev/null
+    printf '\n'
+  else
+    ask _a "$2(visible) "
+  fi
+  _a=$(printf '%s' "$_a" | tr -d '\r')
   eval "$1=\$_a"
 }
 
@@ -280,7 +290,7 @@ EOF
 }
 
 install_core() {
-  info "Installing Root Network Unblocker v2.3..."
+  info "Installing Root Network Unblocker v2.4..."
   if [ ! -x "$SINGBOX_BIN" ] || [ -n "$FORCE" ]; then download_core; else ok "Core already present (use FORCE=1 to re-download)."; fi
   if [ ! -f "$CRED_FILE" ] && [ -f "$OLD_CRED_FILE" ]; then
     mkdir -p "$(dirname "$CRED_FILE")"; cp "$OLD_CRED_FILE" "$CRED_FILE"; chmod 600 "$CRED_FILE"
@@ -462,16 +472,29 @@ EOF
 # ---------------------------------------------------------------- system state (IPv6 / Private DNS)
 
 # Android's settings service rejects uid 0 on many ROMs -> run as shell (2000)
-asettings() { su 2000 -c "settings $*" 2>/dev/null || settings "$@" 2>/dev/null; }
+# Returns 1 (and prints nothing) when the settings service fails ("Failed transaction").
+asettings() {
+  _r=$(su 2000 -c "settings $*" 2>&1 </dev/null)
+  case "$_r" in *Failure*|*Exception*|*"Error"*|*"not found"*)
+    _r=$(settings "$@" 2>&1 </dev/null) ;;
+  esac
+  case "$_r" in *Failure*|*Exception*|*"Error"*|*"not found"*) return 1 ;; esac
+  [ -n "$_r" ] && printf '%s\n' "$_r"
+  return 0
+}
 
 save_state() {
   [ -f "$STATE_FILE" ] && return 0   # keep the ORIGINAL state across restarts
-  PD_MODE=$(asettings get global private_dns_mode 2>/dev/null)
-  PD_SPEC=$(asettings get global private_dns_specifier 2>/dev/null)
+  PD_OK=1
+  PD_MODE=$(asettings get global private_dns_mode) || PD_OK=0
+  PD_SPEC=$(asettings get global private_dns_specifier) || PD_OK=0
+  [ -n "$PD_MODE" ] || PD_OK=0
+  [ "$PD_OK" = "1" ] || { PD_MODE=""; PD_SPEC=""; }
   V6_IN=$(ip6tables -S INPUT 2>/dev/null | sed -n 's/^-P INPUT //p')
   V6_OUT=$(ip6tables -S OUTPUT 2>/dev/null | sed -n 's/^-P OUTPUT //p')
   ( umask 077
     cat > "$STATE_FILE" <<EOF
+PD_OK='$PD_OK'
 PD_MODE='$PD_MODE'
 PD_SPEC='$PD_SPEC'
 V6_IN='${V6_IN:-ACCEPT}'
@@ -481,24 +504,36 @@ EOF
 }
 
 block_ipv6() {
+  [ "$BLOCK_IPV6" = "0" ] && { warn "IPv6 blocking disabled (BLOCK_IPV6=0)."; return 0; }
+  if ip link show 2>/dev/null | grep -Eq '^[0-9]+: (v4-|clat)'; then
+    warn "IPv6-only mobile network (464XLAT) detected - IPv6 is NOT blocked, otherwise data would die."
+    return 0
+  fi
   ip6tables -C INPUT  -i lo -j ACCEPT 2>/dev/null || ip6tables -I INPUT  -i lo -j ACCEPT 2>/dev/null
   ip6tables -C OUTPUT -o lo -j ACCEPT 2>/dev/null || ip6tables -I OUTPUT -o lo -j ACCEPT 2>/dev/null
   ip6tables -P INPUT DROP 2>/dev/null
   ip6tables -P OUTPUT DROP 2>/dev/null
 }
 
+# Private DNS is only touched when we could READ the original value (so we can restore it).
+pd_usable() { [ -f "$STATE_FILE" ] && grep -q "^PD_OK='1'" "$STATE_FILE"; }
+
 set_private_dns() {
-  asettings put global private_dns_mode hostname 2>/dev/null
-  asettings put global private_dns_specifier one.one.one.one 2>/dev/null
+  if pd_usable; then
+    asettings put global private_dns_mode hostname
+    asettings put global private_dns_specifier one.one.one.one
+  else
+    warn "Could not access Android settings - Private DNS left unchanged (harmless)."
+  fi
 }
 
 # proxy-only mode: DNS-over-TLS may not pass through the proxy, so use plain DNS (hijacked by the tunnel)
 set_private_dns_off() {
-  asettings put global private_dns_mode off 2>/dev/null
+  pd_usable && asettings put global private_dns_mode off
 }
 
 restore_system() {
-  PD_MODE=opportunistic; PD_SPEC=""; V6_IN=ACCEPT; V6_OUT=ACCEPT
+  PD_OK=0; PD_MODE=opportunistic; PD_SPEC=""; V6_IN=ACCEPT; V6_OUT=ACCEPT
   [ -f "$STATE_FILE" ] && . "$STATE_FILE"
 
   ip6tables -P INPUT  "$V6_IN"  2>/dev/null
@@ -506,17 +541,84 @@ restore_system() {
   ip6tables -D INPUT  -i lo -j ACCEPT 2>/dev/null
   ip6tables -D OUTPUT -o lo -j ACCEPT 2>/dev/null
 
-  if [ -z "$PD_MODE" ] || [ "$PD_MODE" = "null" ]; then
-    asettings delete global private_dns_mode 2>/dev/null
-  else
-    asettings put global private_dns_mode "$PD_MODE" 2>/dev/null
-  fi
-  if [ -z "$PD_SPEC" ] || [ "$PD_SPEC" = "null" ]; then
-    asettings delete global private_dns_specifier 2>/dev/null
-  else
-    asettings put global private_dns_specifier "$PD_SPEC" 2>/dev/null
+  if [ "$PD_OK" = "1" ]; then
+    if [ -z "$PD_MODE" ] || [ "$PD_MODE" = "null" ]; then
+      asettings delete global private_dns_mode
+    else
+      asettings put global private_dns_mode "$PD_MODE"
+    fi
+    if [ -z "$PD_SPEC" ] || [ "$PD_SPEC" = "null" ]; then
+      asettings delete global private_dns_specifier
+    else
+      asettings put global private_dns_specifier "$PD_SPEC"
+    fi
   fi
   rm -f "$STATE_FILE"
+}
+
+# ---------------------------------------------------------------- WARP endpoint auto-search
+# Many ISPs block UDP 2408 or some Cloudflare IPs. We try several endpoint:port pairs and keep the first
+# one that really passes traffic through WARP (checked with warp=on in Cloudflare's trace).
+WARP_CANDIDATES="162.159.192.1:2408 162.159.192.1:500 162.159.192.1:4500 162.159.192.1:1701 162.159.193.1:2408 162.159.195.1:500 188.114.97.1:2408 188.114.96.1:500 188.114.98.1:4500 188.114.99.1:1701"
+WARP_OK_FILE="$WORK_DIR/warp.ok"
+
+kill_core() {
+  if [ -f "$PID_FILE" ]; then
+    P=$(cat "$PID_FILE" 2>/dev/null)
+    kill "$P" 2>/dev/null
+    i=0; while [ $i -lt 5 ] && kill -0 "$P" 2>/dev/null; do sleep 1; i=$((i + 1)); done
+    kill -9 "$P" 2>/dev/null
+    rm -f "$PID_FILE"
+  fi
+  killall sing-box 2>/dev/null || pkill -f "$SINGBOX_BIN" 2>/dev/null
+  sleep 1
+}
+
+# build config + start sing-box + wait for tun0. returns 0 when the process is alive.
+launch_core() {
+  build_config
+  CHK=$("$SINGBOX_BIN" check -c "$CONFIG_FILE" 2>&1) || { say "$CHK"; die "Config is invalid."; }
+  : > "$LOG_FILE"
+  nohup "$SINGBOX_BIN" run -c "$CONFIG_FILE" >>"$LOG_FILE" 2>&1 &
+  echo $! > "$PID_FILE"
+  i=0
+  while [ $i -lt 10 ]; do
+    is_running || break
+    ip link show tun0 >/dev/null 2>&1 && break
+    sleep 1; i=$((i + 1))
+  done
+  is_running
+}
+
+# 0 when traffic really leaves through WARP (no DNS needed: uses the IP 1.1.1.1, IPv4 only)
+probe_warp() {
+  i=0
+  while [ $i -lt 2 ]; do
+    T=$(curl -4 -s --connect-timeout 4 --max-time 6 https://1.1.1.1/cdn-cgi/trace 2>/dev/null)
+    case "$T" in *warp=on*|*warp=plus*) return 0 ;; esac
+    i=$((i + 1))
+  done
+  return 1
+}
+
+find_warp_endpoint() {
+  info "Searching for a WARP endpoint that works on your network (one-time, ~10 s per try)..."
+  _keep_mode="$MODE"; MODE="warp"
+  LAST=""; [ -s "$WARP_OK_FILE" ] && LAST=$(cat "$WARP_OK_FILE" 2>/dev/null)
+  for c in $LAST $WARP_CANDIDATES; do
+    WARP_ENDPOINT="${c%:*}"; WARP_PORT="${c##*:}"
+    info "  trying $WARP_ENDPOINT:$WARP_PORT ..."
+    if launch_core && probe_warp; then
+      ok "WARP works via $WARP_ENDPOINT:$WARP_PORT"
+      printf '%s' "$c" > "$WARP_OK_FILE"
+      kill_core
+      MODE="$_keep_mode"
+      return 0
+    fi
+    kill_core
+  done
+  MODE="$_keep_mode"
+  return 1
 }
 
 # ---------------------------------------------------------------- start / stop / status
@@ -541,23 +643,25 @@ start_bypass() {
   info "Validating config..."
   CHK=$("$SINGBOX_BIN" check -c "$CONFIG_FILE" 2>&1) || { say "$CHK"; die "Config is invalid."; }
 
+  save_state
+  block_ipv6
+
+  if [ "$MODE" != "proxy" ] && [ -z "$WARP_FIXED" ]; then
+    if ! find_warp_endpoint; then
+      restore_system
+      say "--- last log lines ---"; tail -n 15 "$LOG_FILE" 2>/dev/null
+      die "No WARP endpoint is reachable from this network (WARP may be blocked by your ISP). Network restored.
+    Try: Wi-Fi instead of mobile data (or the reverse), 'renew', TUN_STACK=gvisor, or proxy-only mode."
+    fi
+    [ -f "$WARP_OK_FILE" ] && { c=$(cat "$WARP_OK_FILE"); WARP_ENDPOINT="${c%:*}"; WARP_PORT="${c##*:}"; }
+  fi
+
   case "$MODE" in
     warp)  info "Starting tunnel: device -> WARP -> internet" ;;
     proxy) info "Starting tunnel: device -> proxy -> internet" ;;
     both)  info "Starting tunnel: device -> WARP -> proxy -> internet" ;;
   esac
-  save_state
-  block_ipv6
-  : > "$LOG_FILE"
-  nohup "$SINGBOX_BIN" run -c "$CONFIG_FILE" >>"$LOG_FILE" 2>&1 &
-  echo $! > "$PID_FILE"
-
-  i=0
-  while [ $i -lt 10 ]; do
-    is_running || break
-    ip link show tun0 >/dev/null 2>&1 && break
-    sleep 1; i=$((i + 1))
-  done
+  launch_core
 
   if ! is_running; then
     rm -f "$PID_FILE"
@@ -571,7 +675,7 @@ start_bypass() {
   printf '%s' "$MODE" > "$MODE_FILE"
   if [ "$MODE" != "warp" ] && [ -n "$PROXY_IP" ]; then proxy_summary > "$ACTIVE_PROXY_FILE"; else rm -f "$ACTIVE_PROXY_FILE"; fi
 
-  TRACE=$(curl -s --connect-timeout 8 --max-time 15 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null)
+  TRACE=$(curl -4 -s --connect-timeout 8 --max-time 15 https://1.1.1.1/cdn-cgi/trace 2>/dev/null)
   if [ -n "$TRACE" ]; then
     ok "Tunnel is up (mode: $MODE). IP: $(printf '%s\n' "$TRACE" | sed -n 's/^ip=//p')  Country: $(printf '%s\n' "$TRACE" | sed -n 's/^loc=//p')  WARP: $(printf '%s\n' "$TRACE" | sed -n 's/^warp=//p')"
   else
@@ -592,20 +696,16 @@ start_bypass() {
       warn "Try another port:  WARP_PORT=500 sh $SELF warp on   (also 1701, 4500)"
     fi
   fi
+  if [ -n "$TRACE" ] && ! curl -4 -s -o /dev/null --connect-timeout 6 --max-time 10 https://www.cloudflare.com 2>/dev/null; then
+    warn "Tunnel works but DNS names do not resolve yet. If apps fail, run: su -c 'sh $SELF logs'"
+  fi
   if [ "$MODE" = "both" ]; then ok "Chain: device -> WARP -> $(proxy_summary)"; fi
   if [ "$MODE" = "proxy" ]; then ok "Path: device -> $(proxy_summary)"; fi
 }
 
 stop_bypass() {
   info "Stopping tunnel..."
-  if [ -f "$PID_FILE" ]; then
-    P=$(cat "$PID_FILE" 2>/dev/null)
-    kill "$P" 2>/dev/null
-    i=0; while [ $i -lt 5 ] && kill -0 "$P" 2>/dev/null; do sleep 1; i=$((i + 1)); done
-    kill -9 "$P" 2>/dev/null
-    rm -f "$PID_FILE"
-  fi
-  killall sing-box 2>/dev/null || pkill -f "$SINGBOX_BIN" 2>/dev/null
+  kill_core
   restore_system
   rm -f "$ACTIVE_PROXY_FILE" "$MODE_FILE"
   say "${RED}[-] Stopped. Network restored to previous settings.${NC}"
@@ -742,7 +842,7 @@ uninstall_all() {
 }
 
 usage() {
-  say "${CYAN}Root Network Unblocker v2.3${NC}  (WARP and/or proxy, all device traffic)"
+  say "${CYAN}Root Network Unblocker v2.4${NC}  (WARP and/or proxy, all device traffic)"
   say ""
   say "${CYAN}WARP only${NC}  (device -> WARP)"
   say "  su -c 'sh $SELF warp on'"
@@ -762,6 +862,7 @@ usage() {
   say "  su -c 'sh $SELF autostart on|off'"
   say "  su -c 'sh $SELF uninstall'"
   say "Env: PROXY_TYPE PROXY_IP PROXY_PORT PROXY_USER PROXY_PASS PROXY_SNI PROXY_INSECURE=1"
+  say "     BLOCK_IPV6=0 (do not block IPv6)  HIDE_PASS=1 (hide password while typing)"
   say "     WARP_PORT (2408|500|1701|4500)  WARP_ENDPOINT  TUN_STACK (system|gvisor)  SB_VER  SB_URL  FORCE=1"
 }
 
@@ -774,6 +875,7 @@ esac
 
 PROXY_EXPLICIT=""; [ -n "$PROXY_IP" ] && PROXY_EXPLICIT=1   # proxy given on the command line
 load_user_conf
+WARP_FIXED=""; [ -n "$WARP_ENDPOINT$WARP_PORT" ] && WARP_FIXED=1   # user pinned an endpoint/port -> no auto-search
 SB_VER="${SB_VER:-1.10.1}"
 WARP_ENDPOINT="${WARP_ENDPOINT:-162.159.192.1}"
 WARP_PORT="${WARP_PORT:-2408}"
