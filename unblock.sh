@@ -1,4 +1,5 @@
 #!/system/bin/sh
+export PATH="/data/data/com.termux/files/usr/bin:$PATH"
 # Project: Root Network Unblocker & WARP/HTTP Proxy Tunnel (v2.0)
 # Path: /data/local/tmp/unblock.sh
 
@@ -34,11 +35,13 @@ install_core() {
 
     echo -e "${YELLOW}[*] Downloading sing-box core ($SB_ARCH)...${NC}"
     SB_VER="1.10.1"
-    URL="https://github.com{SB_VER}/sing-box-${SB_VER}-android-${SB_ARCH}.tar.gz"
+    PROTO="https://"
+    GH_HOST="github.com"
+    URL="${PROTO}${GH_HOST}/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-android-${SB_ARCH}.tar.gz"
     
     curl -sL "$URL" -o "$WORK_DIR/sb.tar.gz"
     if [ ! -s "$WORK_DIR/sb.tar.gz" ]; then
-        echo -e "${RED}[!] Download failed. Check your internet connection.${NC}"
+        echo -e "${RED}[!] Download failed. Check your internet connection or curl installation.${NC}"
         exit 1
     fi
 
@@ -54,7 +57,9 @@ install_core() {
     PUB_KEY=$(echo "$KEYS" | grep "PublicKey" | awk '{print $2}')
 
     # Register WARP Account via Cloudflare API
-    REG_RES=$(curl -s -X POST "https://cloudflareclient.com" \
+    CF_HOST="api.cloudflareclient.com"
+    API_URL="${PROTO}${CF_HOST}/v0a2158/reg"
+    REG_RES=$(curl -s -X POST "$API_URL" \
         -H "Content-Type: application/json" \
         -d "{\"key\":\"${PUB_KEY}\",\"install_id\":\"\",\"fcm_token\":\"\",\"tos\":\"$(date -u +%Y-%m-%dT%H:%M:%S.000Z)\",\"model\":\"Android\",\"serial_number\":\"\",\"locale\":\"en_US\"}")
 
@@ -179,7 +184,7 @@ start_bypass() {
     ip6tables -P OUTPUT DROP 2>/dev/null
     ip6tables -P INPUT DROP 2>/dev/null
 
-    # 2. Set Private DNS safely via shell user (fixes service settings error)
+    # 2. Set Private DNS safely via shell user
     su 2000 -c "settings put global private_dns_mode hostname" 2>/dev/null
     su 2000 -c "settings put global private_dns_specifier one.one.one.one" 2>/dev/null
 
