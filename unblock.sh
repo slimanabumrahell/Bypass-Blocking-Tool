@@ -16,8 +16,10 @@ BYEDPI_BIN="$WORK_DIR/ciadpi"
 CONFIG_FILE="$WORK_DIR/config.json"
 XRAY_CONFIG_FILE="$WORK_DIR/xray_config.json"
 PID_FILE="$WORK_DIR/engine.pid"
+XRAY_PID_FILE="$WORK_DIR/xray.pid"
 BYEDPI_PID_FILE="$WORK_DIR/byedpi.pid"
 LOG_FILE="$WORK_DIR/unblocker.log"
+XRAY_LOG_FILE="$WORK_DIR/xray.log"
 STATE_FILE="$WORK_DIR/state.env"
 ACTIVE_PROXY_FILE="$WORK_DIR/active.proxy"
 MODE_FILE="$WORK_DIR/active.mode"
@@ -41,6 +43,12 @@ die()  { say "${RED}[x] ${NC}$*"; exit 1; }
 is_running() {
   [ -f "$PID_FILE" ] || return 1
   _pid=$(cat "$PID_FILE" 2>/dev/null)
+  [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null
+}
+
+is_xray_running() {
+  [ -f "$XRAY_PID_FILE" ] || return 1
+  _pid=$(cat "$XRAY_PID_FILE" 2>/dev/null)
   [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null
 }
 
@@ -257,27 +265,42 @@ download_cores() {
   fi
 
   # 2. Xray-core
-  XRAY_URL="https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VER}/Xray-android-${ARCH}.zip"
-  info "Downloading Xray-core v${XRAY_VER} (${ARCH})..."
-  if command -v unzip >/dev/null 2>&1 && curl -fL --retry 3 --connect-timeout 15 -o "$WORK_DIR/xray.zip" "$XRAY_URL"; then
-    unzip -o "$WORK_DIR/xray.zip" -d "$WORK_DIR" >/dev/null 2>&1
-    mv "$WORK_DIR/xray" "$XRAY_BIN" 2>/dev/null || true
-    rm -f "$WORK_DIR/xray.zip" "$WORK_DIR"/*.dat 2>/dev/null || true
-    chmod 755 "$XRAY_BIN" 2>/dev/null || true
-    ok "Xray-core installed successfully."
-  else
-    warn "Xray download skipped or failed."
+  info "Downloading Xray-core (${ARCH})..."
+  _xray_ok=0
+  if command -v unzip >/dev/null 2>&1; then
+    for _xurl in \
+      "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VER}/Xray-android-${ARCH}.zip" \
+      "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-android-${ARCH}.zip"; do
+      if curl -fL --retry 2 --connect-timeout 15 -o "$WORK_DIR/xray.zip" "$_xurl" 2>/dev/null; then
+        unzip -o "$WORK_DIR/xray.zip" -d "$WORK_DIR" >/dev/null 2>&1
+        mv "$WORK_DIR/xray" "$XRAY_BIN" 2>/dev/null || true
+        rm -f "$WORK_DIR/xray.zip" "$WORK_DIR"/*.dat 2>/dev/null || true
+        if [ -f "$XRAY_BIN" ]; then
+          chmod 755 "$XRAY_BIN"
+          ok "Xray-core installed successfully."
+          _xray_ok=1
+          break
+        fi
+      fi
+    done
   fi
+  [ "$_xray_ok" -eq 0 ] && warn "Xray download skipped or failed."
 
   # 3. ByeDPI (ciadpi)
-  BYEDPI_URL="https://github.com/hagezi/byedpi-binaries/raw/main/android/ciadpi-${BYE_ARCH}"
   info "Downloading ByeDPI engine (${BYE_ARCH})..."
-  if curl -fL --retry 3 --connect-timeout 15 -o "$BYEDPI_BIN" "$BYEDPI_URL"; then
-    chmod 755 "$BYEDPI_BIN"
-    ok "ByeDPI engine installed successfully."
-  else
-    warn "ByeDPI download skipped."
-  fi
+  _bye_ok=0
+  for _burl in \
+    "https://github.com/hagezi/byedpi-binaries/raw/main/android/ciadpi-${BYE_ARCH}" \
+    "https://github.com/romanvt/byedpi/releases/latest/download/ciadpi-${BYE_ARCH}"; do
+    if curl -fL --retry 2 --connect-timeout 15 -o "$BYEDPI_BIN" "$_burl" 2>/dev/null && [ -s "$BYEDPI_BIN" ]; then
+      chmod 755 "$BYEDPI_BIN"
+      ok "ByeDPI engine installed successfully."
+      _bye_ok=1
+      break
+    fi
+    rm -f "$BYEDPI_BIN"
+  done
+  [ "$_bye_ok" -eq 0 ] && warn "ByeDPI download skipped."
 }
 
 register_warp() {
@@ -388,7 +411,67 @@ EOF
 }
 
 proxy_outbound() {
+  DETOUR_JSON=""
+  [ "$MODE" = "both" ] && DETOUR_JSON='"detour": "warp-out",'
+
   if [ -n "${PROXY_URL:-}" ]; then
+    _proto=$(printf '%s' "$PROXY_URL" | cut -d':' -f1)
+    _body=$(printf '%s' "$PROXY_URL" | sed 's#^[^:]*://##')
+    _userinfo=$(printf '%s' "$_body" | cut -d'@' -f1)
+    _hostport=$(printf '%s' "$_body" | sed 's/.*@//; s/[/?#].*//')
+    _host=$(printf '%s' "$_hostport" | cut -d':' -f1)
+    _port=$(printf '%s' "$_hostport" | cut -d':' -f2)
+
+    case "$_proto" in
+      vless)
+        [ -n "$_host" ] && [ -n "$_port" ] && [ -n "$_userinfo" ] && {
+          cat <<EOF
+{
+  "type": "vless",
+  "tag": "proxy-out",
+  $DETOUR_JSON
+  "server": "$(json_esc "$_host")",
+  "server_port": $_port,
+  "uuid": "$(json_esc "$_userinfo")"
+}
+EOF
+          return 0
+        } ;;
+      trojan)
+        [ -n "$_host" ] && [ -n "$_port" ] && [ -n "$_userinfo" ] && {
+          cat <<EOF
+{
+  "type": "trojan",
+  "tag": "proxy-out",
+  $DETOUR_JSON
+  "server": "$(json_esc "$_host")",
+  "server_port": $_port,
+  "password": "$(json_esc "$_userinfo")"
+}
+EOF
+          return 0
+        } ;;
+      ss)
+        _decoded=$(printf '%s' "$_userinfo" | tr '_-' '/+' | base64 -d 2>/dev/null || true)
+        _method=$(printf '%s' "$_decoded" | cut -d':' -f1)
+        _pass=$(printf '%s' "$_decoded" | cut -d':' -f2-)
+        [ -n "$_host" ] && [ -n "$_port" ] && [ -n "$_method" ] && [ -n "$_pass" ] && {
+          cat <<EOF
+{
+  "type": "shadowsocks",
+  "tag": "proxy-out",
+  $DETOUR_JSON
+  "server": "$(json_esc "$_host")",
+  "server_port": $_port,
+  "method": "$(json_esc "$_method")",
+  "password": "$(json_esc "$_pass")"
+}
+EOF
+          return 0
+        } ;;
+    esac
+
+    warn "Could not parse all fields of proxy URL; falling back to direct."
     cat <<EOF
 {
   "type": "direct",
@@ -425,9 +508,6 @@ EOF
       AUTH_JSON="${AUTH_JSON}\"password\": \"$(json_esc "$PROXY_PASS")\","
     fi
   fi
-
-  DETOUR_JSON=""
-  [ "$MODE" = "both" ] && DETOUR_JSON='"detour": "warp-out",'
 
   cat <<EOF
 {
@@ -516,6 +596,48 @@ build_config() {
 }
 EOF
   )
+}
+
+# ---------------------------------------------------------------- Xray-core helper
+
+launch_xray_if_needed() {
+  [ -x "$XRAY_BIN" ] || return 0
+  [ -n "${PROXY_URL:-}" ] || return 0
+  case "$PROXY_URL" in
+    vless://*|vmess://*|trojan://*|ss://*) ;;
+    *) return 0 ;;
+  esac
+
+  (
+    umask 077
+    cat > "$XRAY_CONFIG_FILE" <<EOF
+{
+  "log": { "loglevel": "warning" },
+  "inbounds": [
+    {
+      "listen": "127.0.0.1",
+      "port": 10808,
+      "protocol": "socks",
+      "settings": { "udp": true }
+    }
+  ],
+  "outbounds": [
+    { "protocol": "freedom", "tag": "direct" }
+  ]
+}
+EOF
+  )
+  nohup "$XRAY_BIN" run -c "$XRAY_CONFIG_FILE" >>"$XRAY_LOG_FILE" 2>&1 &
+  echo $! > "$XRAY_PID_FILE"
+  ok "Xray-core helper started (PID $(cat "$XRAY_PID_FILE"))."
+}
+
+stop_xray() {
+  if [ -f "$XRAY_PID_FILE" ]; then
+    _pid=$(cat "$XRAY_PID_FILE" 2>/dev/null)
+    [ -n "$_pid" ] && kill -9 "$_pid" 2>/dev/null || true
+    rm -f "$XRAY_PID_FILE"
+  fi
 }
 
 # ---------------------------------------------------------------- DPI Bypass Engine (ByeDPI)
@@ -680,6 +802,7 @@ kill_core() {
     fi
     rm -f "$PID_FILE"
   fi
+  stop_xray
   kill_stale
 }
 
@@ -695,6 +818,9 @@ launch_core() {
     ip link show tun0 >/dev/null 2>&1 && break
     sleep 1; i=$((i + 1))
   done
+  if is_running && [ "$MODE" != "warp" ]; then
+    launch_xray_if_needed
+  fi
   is_running
 }
 
@@ -872,6 +998,11 @@ check_status() {
     fi
   else
     say "${RED}[-] Status: STOPPED${NC}"
+  fi
+  if is_xray_running; then
+    ok "Xray-core: ACTIVE (PID $(cat "$XRAY_PID_FILE"))"
+  else
+    info "Xray-core: INACTIVE"
   fi
   if is_byedpi_running; then
     ok "ByeDPI Engine: ACTIVE (PID $(cat "$BYEDPI_PID_FILE"))"
