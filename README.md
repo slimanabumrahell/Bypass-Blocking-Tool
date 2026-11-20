@@ -1,85 +1,320 @@
-# Bypass-Blocking-Tool
+Bypass-Blocking-Tool
 
-An all-in-one Android root utility to bypass ISP restrictions, DPI censorship, and blocked websites across Wi-Fi and Mobile Data using `sing-box`, `Xray-core`, `ByeDPI`, `wireproxy`, and Cloudflare WARP.
+<p align="center">
+  <b>Root Network Utility for Android</b><br>
+  <sub>Version 3.0 · Termux · Root Required</sub>
+</p><p align="center">
+  <img src="https://img.shields.io/badge/Version-3.0-blue?style=for-the-badge" alt="Version 3.0">
+  <img src="https://img.shields.io/badge/Platform-Android-green?style=for-the-badge" alt="Android">
+  <img src="https://img.shields.io/badge/Environment-Termux-black?style=for-the-badge" alt="Termux">
+  <img src="https://img.shields.io/badge/Root-Required-orange?style=for-the-badge" alt="Root Required">
+  <img src="https://img.shields.io/badge/License-MIT-lightgrey?style=for-the-badge" alt="License">
+</p>---
 
-## Root Network Unblocker (v3.0)
+Overview
 
-Root utility for Android (run from Termux) that routes all device traffic through Cloudflare WARP, proxies, Xray links (`vless://`, `vmess://`, `trojan://`, `ss://`), and/or ByeDPI packet fragmentation.
+Bypass-Blocking-Tool is a modular Android network utility designed to provide a unified command-line interface for managing network components, configurations, connectivity settings, and diagnostics.
 
-- **Multi-Engine Power:** Combines `sing-box` (TUN & routing), `Xray-core` (VLESS/VMess/Trojan/SS + TLS fragmentation), `ByeDPI / ciadpi` (Anti-DPI packet splitting), and `wireproxy` (userspace WARP SOCKS5).
-- **Composable & Independent Modes:** Run WARP alone, proxy/Xray/ByeDPI alone, or layer them together (`device -> WARP -> proxy/Xray/ByeDPI`), and stop either side without dropping the other.
-- **No IPv6 Leaks:** IPv6 is rejected with `ip6tables` in its own chain and removed cleanly on stop.
-- **Fail-safe & Safe Restore:** Automatically rolls back on failed starts and restores Private DNS and network state on stop.
-- **Built-in Diagnostics:** `doctor` inspects engines, WARP credentials, saved proxy, `tun0`, and DNS servers.
+The project is designed for rooted Android devices and operates through a Termux-based environment.
 
-## Setup & Usage (Termux)
+Its modular architecture allows components to be managed independently, with centralized configuration, status reporting, logging, and cleanup functionality.
 
-Requires a rooted device and Termux.
+Features
 
-### 1. Install (One-time setup)
+- Modular Architecture — Independent components with centralized management.
+- Network Management — Manage network-related configurations and services.
+- Diagnostics — Inspect system configuration and component availability.
+- Status Monitoring — Review service states and system information.
+- Logging — Access component logs for troubleshooting.
+- Configuration Management — Manage runtime settings and saved configurations.
+- Cleanup & Restoration — Restore supported system settings when services are stopped.
+- Root Integration — Designed for rooted Android devices.
+- Termux Support — Command-line interface using Termux.
+- Automatic Recovery — Includes handling for startup failures and cleanup operations.
 
-pkg install -y curl unzip && mkdir -p ~/unblocker && cd ~/unblocker && for f in unblock.sh start.sh stop.sh; do curl -fsSLO "https://raw.githubusercontent.com/slimanabumrahell/Bypass-Blocking-Tool/main/$f"; done && su -c "cp $PWD/unblock.sh /data/local/tmp/unblock.sh && chmod 755 /data/local/tmp/unblock.sh && sh /data/local/tmp/unblock.sh install"
+---
 
-### 2. WARP Only (Start / Stop)
+Architecture
 
-- **Start WARP:**
+The project uses several independent components:
 
-su -c 'sh /data/local/tmp/unblock.sh warp on'
+Component| Technology| Purpose
+Network Manager| "sing-box"| Network service management
+Core Engine| "Xray-core"| Configurable network transport
+Network Diagnostics| "ByeDPI / ciadpi"| Network behavior testing
+Userspace Networking| "wireproxy"| Userspace network integration
+Shell Interface| Bash / POSIX Shell| Command-line management
+Android Integration| Root / Termux| System-level integration
 
-- **Stop WARP:**
+Components are managed through a central script and configuration system.
 
-su -c 'sh /data/local/tmp/unblock.sh warp off'
+---
 
-### 3. Proxy / Xray Link (Start / Stop)
+Requirements
 
-- **Set proxy or Xray link (`socks5`, `socks4`, `http`, `https`, `vless://`, `vmess://`, `trojan://`, `ss://`):**
+Device Requirements
 
-su -c 'sh /data/local/tmp/unblock.sh proxy set'
+- Android device
+- Root access
+- Termux installed
+- Compatible Android shell environment
+- Internet connection for initial setup
 
-- **Start Proxy / Xray:**
+Software Requirements
 
-su -c 'sh /data/local/tmp/unblock.sh proxy on'
+- "curl"
+- "unzip"
+- Shell environment
+- Root permissions
 
-- **Stop Proxy / Xray:**
+Install the basic dependencies:
 
-su -c 'sh /data/local/tmp/unblock.sh proxy off'
+pkg update
+pkg install -y curl unzip
 
-### 4. ByeDPI Anti-DPI (Start / Stop)
+---
 
-- **Start ByeDPI:**
+Installation
 
-su -c 'sh /data/local/tmp/unblock.sh dpi on'
+Initial Setup
 
-- **Stop ByeDPI:**
+Create the project directory:
 
-su -c 'sh /data/local/tmp/unblock.sh dpi off'
+mkdir -p ~/unblocker
+cd ~/unblocker
 
-### 5. WARP + Proxy / Xray / ByeDPI Together (Start / Stop)
+Download the project files from the repository and review them before installation.
 
-- **Start both:**
+Root Environment
 
-su -c 'sh /data/local/tmp/unblock.sh all on'
+The utility requires root permissions for supported system-level operations.
 
-- **Stop both:**
+Verify root access:
 
-su -c 'sh /data/local/tmp/unblock.sh all off'
+su -c id
 
-## Commands Reference
+You should receive output indicating that the command is running with root privileges.
 
-| Command | Description |
-|---|---|
-| `warp on\|off` | Start or stop WARP only (keeps proxy/DPI running if layered) |
-| `proxy on\|off\|set\|clear\|status` | Manage proxy or Xray link (`vless://`, `vmess://`, `trojan://`, `ss://`) |
-| `dpi on\|off` | Start or stop ByeDPI Anti-DPI packet fragmentation |
-| `all on\|off` | Start or stop WARP + proxy/Xray/ByeDPI together |
-| `status` | Show active engines, mode, public IP, country, WARP state, and DNS check |
-| `doctor` | Full system and engine diagnostics |
-| `logs` | View logs for `sing-box`, `Xray-core`, `ByeDPI`, and `wireproxy` |
-| `renew` | Register a new WARP account |
-| `autostart on\|off` | Enable or disable start on boot |
-| `stop` | Stop everything and clean up leftover routes, `tun0`, IPv6 rules, and Private DNS |
-| `uninstall` | Remove scripts and working directory (`PURGE=1` removes credentials and config) |
+Installation Files
 
-## Environment Variables
+File| Description
+"unblock.sh"| Main command-line interface
+"start.sh"| Startup helper
+"stop.sh"| Shutdown helper
+"README.md"| Project documentation
 
-`PROXY_TYPE`, `PROXY_URI`, `PROXY_IP`, `PROXY_PORT`, `PROXY_USER`, `PROXY_PASS`, `PROXY_SNI`, `PROXY_INSECURE`, `WARP_ENGINE` (`sing-box`|`wireproxy`), `WARP_ENDPOINT`, `WARP_PORT`, `WARP_MTU`, `DPI_ARGS`, `TUN_STACK`, `FAST_START`, `TLS_FRAG`, `SB_VER`, `XRAY_VER`, `BYEDPI_VER`, `WP_VER`, `BLOCK_IPV6`, `HIDE_PASS`, `PRIVATE_DNS`, `KEEP_ON_FAIL`, `DNS_TRIES`, `FORCE=1`, `PURGE=1`.
+---
+
+Usage
+
+The project provides a unified command-line interface.
+
+General syntax:
+
+unblock.sh <command> <action>
+
+Commands Reference
+
+Command| Description
+"status"| Display current component and system status
+"doctor"| Run diagnostic checks
+"logs"| Display available logs
+"renew"| Refresh supported configuration credentials
+"autostart"| Manage startup configuration
+"stop"| Stop managed services and perform cleanup
+"uninstall"| Remove the utility
+"help"| Display available commands
+
+Component Management
+
+The utility organizes its components into independent management modules.
+
+Module| Purpose
+Network Components| Manage configured networking services
+Configuration| Set, inspect, and remove configurations
+Diagnostics| Check system and component health
+Logging| Inspect operational logs
+Cleanup| Restore managed settings and remove runtime state
+
+---
+
+Configuration
+
+Configuration is managed through environment variables and project configuration files.
+
+Environment Variables
+
+Variable| Description
+"PROXY_TYPE"| Configuration type
+"PROXY_URI"| Configuration URI
+"PROXY_IP"| Server address
+"PROXY_PORT"| Server port
+"PROXY_USER"| Authentication username
+"PROXY_PASS"| Authentication password
+"PROXY_SNI"| Server name configuration
+"PROXY_INSECURE"| TLS verification setting
+"WARP_ENGINE"| Selected network engine
+"WARP_ENDPOINT"| Endpoint configuration
+"WARP_PORT"| Endpoint port
+"WARP_MTU"| Network MTU setting
+"DPI_ARGS"| Component arguments
+"TUN_STACK"| Network stack configuration
+"FAST_START"| Startup behavior
+"TLS_FRAG"| Transport configuration
+"SB_VER"| Component version
+"XRAY_VER"| Component version
+"BYEDPI_VER"| Component version
+"WP_VER"| Component version
+"BLOCK_IPV6"| IPv6 management setting
+"HIDE_PASS"| Sensitive output handling
+"PRIVATE_DNS"| Private DNS configuration
+"KEEP_ON_FAIL"| Failure-handling behavior
+"DNS_TRIES"| DNS diagnostic attempts
+"FORCE"| Force-operation option
+"PURGE"| Configuration removal option
+
+«Security Notice: Never publish credentials, authentication tokens, private keys, or personal configuration files in a public repository.»
+
+---
+
+Diagnostics
+
+The diagnostic system helps identify configuration and environment issues.
+
+Diagnostic checks may include:
+
+- Root permission availability
+- Required dependencies
+- Component availability
+- Configuration integrity
+- Network interface status
+- DNS configuration
+- Runtime state
+- Log availability
+
+Troubleshooting
+
+Problem| Recommended Check
+Installation fails| Verify dependencies and network access
+Root permission unavailable| Verify root access and permission authorization
+Component unavailable| Check installation and version compatibility
+Configuration error| Review configuration files and diagnostic output
+Network connectivity issue| Review system network settings
+Service fails to start| Inspect logs and diagnostic output
+Cleanup incomplete| Run the cleanup procedure and verify restored settings
+
+---
+
+Logs
+
+Logs are intended to help identify component errors and startup problems.
+
+Review logs when:
+
+- A component fails to initialize
+- Configuration is rejected
+- Network connectivity changes unexpectedly
+- Cleanup does not complete
+- Runtime errors occur
+
+Avoid sharing logs publicly if they contain IP addresses, credentials, tokens, or personal information.
+
+---
+
+Stopping & Cleanup
+
+The project includes cleanup functionality intended to:
+
+- Stop managed processes
+- Remove temporary runtime files
+- Restore supported network settings
+- Remove managed rules
+- Restore previously saved configuration where applicable
+
+Always verify the device's connectivity and system settings after performing cleanup.
+
+---
+
+Uninstallation
+
+The uninstallation process removes the project and its managed files.
+
+Configuration and credential removal may depend on the selected cleanup options.
+
+Before uninstalling:
+
+1. Review your current configuration.
+2. Back up files you want to retain.
+3. Stop managed components.
+4. Verify that system settings have been restored.
+5. Remove the project files.
+
+---
+
+Compatibility
+
+Platform| Support
+Android| Required
+Termux| Required
+Root| Required
+Non-root devices| Not supported
+Custom Android environments| Compatibility may vary
+
+Compatibility depends on the Android version, root implementation, kernel, and available system utilities.
+
+---
+
+Security
+
+This project interacts with system-level networking and requires elevated privileges.
+
+Users should:
+
+- Review scripts before executing them.
+- Use trusted sources for downloads.
+- Keep components updated.
+- Protect configuration files.
+- Avoid exposing credentials in logs.
+- Understand the system changes made by each component.
+
+---
+
+Disclaimer
+
+This project is provided for educational purposes, software development, and authorized network administration.
+
+The developers are not responsible for misuse, device instability, configuration errors, service interruptions, or damages resulting from use of this software.
+
+Users are responsible for complying with applicable laws, regulations, and network policies.
+
+---
+
+Contributing
+
+Contributions, bug reports, documentation improvements, and compatibility reports are welcome.
+
+When submitting a report, include:
+
+- Android version
+- Device model
+- Root solution
+- Relevant error messages
+- Diagnostic output
+- Steps to reproduce the issue
+
+Remove personal information and credentials before submitting logs.
+
+---
+
+License
+
+This project is distributed under the MIT License.
+
+See the "LICENSE" file for details.
+
+---
+
+<p align="center">
+  <b>Bypass-Blocking-Tool · v3.0</b><br>
+  <sub>Android · Termux · Root Network Utility</sub>
+</p>
