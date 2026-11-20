@@ -148,7 +148,15 @@ load_creds() {
   fi
   [ -f "$CRED_FILE" ] || die "No WARP credentials. Run 'install' first."
   . "$CRED_FILE"
-  [ -n "$PRIV_KEY" ] && [ -n "$CLIENT_IPV4" ] && [ -n "$PEER_PUB" ] || die "Credentials file is incomplete. Run 'renew'."
+  # strip hidden \r / newlines / spaces that break the JSON
+  PRIV_KEY=$(printf '%s' "$PRIV_KEY" | tr -cd 'A-Za-z0-9+/=')
+  PEER_PUB=$(printf '%s' "$PEER_PUB" | tr -cd 'A-Za-z0-9+/=')
+  CLIENT_IPV4=$(printf '%s' "$CLIENT_IPV4" | tr -cd '0-9.')
+  RESERVED=$(printf '%s' "$RESERVED" | tr -cd '0-9,')
+  [ "${#PRIV_KEY}" -eq 44 ] && [ "${#PEER_PUB}" -eq 44 ] \
+    && printf '%s' "$CLIENT_IPV4" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' \
+    || die "WARP credentials are corrupted. Run: su -c 'sh $SELF renew'"
+  printf '%s' "$RESERVED" | grep -Eq '^[0-9]+,[0-9]+,[0-9]+$' || RESERVED=""
 }
 
 wg_outbound() {
@@ -236,10 +244,13 @@ EOF
 
 # ---------------------------------------------------------------- system state (IPv6 / Private DNS)
 
+# Android's settings service rejects uid 0 on many ROMs -> run as shell (2000)
+asettings() { su 2000 -c "settings $*" 2>/dev/null || settings "$@" 2>/dev/null; }
+
 save_state() {
   [ -f "$STATE_FILE" ] && return 0   # keep the ORIGINAL state across restarts
-  PD_MODE=$(settings get global private_dns_mode 2>/dev/null)
-  PD_SPEC=$(settings get global private_dns_specifier 2>/dev/null)
+  PD_MODE=$(asettings get global private_dns_mode 2>/dev/null)
+  PD_SPEC=$(asettings get global private_dns_specifier 2>/dev/null)
   V6_IN=$(ip6tables -S INPUT 2>/dev/null | sed -n 's/^-P INPUT //p')
   V6_OUT=$(ip6tables -S OUTPUT 2>/dev/null | sed -n 's/^-P OUTPUT //p')
   ( umask 077
@@ -260,8 +271,8 @@ block_ipv6() {
 }
 
 set_private_dns() {
-  settings put global private_dns_mode hostname 2>/dev/null
-  settings put global private_dns_specifier one.one.one.one 2>/dev/null
+  asettings put global private_dns_mode hostname 2>/dev/null
+  asettings put global private_dns_specifier one.one.one.one 2>/dev/null
 }
 
 restore_system() {
@@ -274,14 +285,14 @@ restore_system() {
   ip6tables -D OUTPUT -o lo -j ACCEPT 2>/dev/null
 
   if [ -z "$PD_MODE" ] || [ "$PD_MODE" = "null" ]; then
-    settings delete global private_dns_mode 2>/dev/null
+    asettings delete global private_dns_mode 2>/dev/null
   else
-    settings put global private_dns_mode "$PD_MODE" 2>/dev/null
+    asettings put global private_dns_mode "$PD_MODE" 2>/dev/null
   fi
   if [ -z "$PD_SPEC" ] || [ "$PD_SPEC" = "null" ]; then
-    settings delete global private_dns_specifier 2>/dev/null
+    asettings delete global private_dns_specifier 2>/dev/null
   else
-    settings put global private_dns_specifier "$PD_SPEC" 2>/dev/null
+    asettings put global private_dns_specifier "$PD_SPEC" 2>/dev/null
   fi
   rm -f "$STATE_FILE"
 }
