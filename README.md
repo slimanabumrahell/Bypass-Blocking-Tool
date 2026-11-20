@@ -15,8 +15,8 @@ Root utility for Android that routes **all** device traffic (Wi-Fi + Mobile Data
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/slimanabumrahell/Bypass-Blocking-Tool/main/unblock.sh -o "$HOME/unblock.sh"
+su -c 'sh /data/local/tmp/unblock.sh stop'
 su -c "cp $HOME/unblock.sh /data/local/tmp/unblock.sh && chmod 755 /data/local/tmp/unblock.sh"
-su -c 'sh /data/local/tmp/unblock.sh install'     # once
 su -c 'sh /data/local/tmp/unblock.sh start'
 ```
 
