@@ -1,10 +1,8 @@
 # Bypass-Blocking-Tool
 
-```bash
-su -c 'curl -sL https://githubusercontent.com -o /data/local/tmp/unblock.sh && chmod 755 /data/local/tmp/unblock.sh'
-```
+An all-in-one Android root utility to bypass ISP restrictions, DPI censorship, and blocked websites across Wi-Fi and Mobile Data via an automated Cloudflare WARP tunnel.
 
-# Root Network Unblocker (v2.0)
+## Root Network Unblocker (v2.0)
 
 A standalone root script for Android to bypass network restrictions, DPI blocks, and HTTP proxy blocks across Wi-Fi and Mobile Data using an automated Cloudflare WARP TUN engine (`sing-box`).
 
@@ -16,10 +14,10 @@ A standalone root script for Android to bypass network restrictions, DPI blocks,
 
 ## Setup & Usage (Termux)
 
-### 1. Move script to executable path (One-time setup)
-Download `unblock.sh` to your internal storage or `Download` folder, then run in Termux:
+### 1. Download & Prepare Script (One-time setup)
+Run this command in Termux to download the script directly from GitHub:
 ```bash
-su -c 'cp /sdcard/Download/unblock.sh /data/local/tmp/unblock.sh && chmod 755 /data/local/tmp/unblock.sh'
+su -c 'curl -sL https://githubusercontent.com -o /data/local/tmp/unblock.sh && chmod 755 /data/local/tmp/unblock.sh'
 ```
 
 ### 2. Install Engine & Register WARP (One-time setup)
